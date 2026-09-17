@@ -37,3 +37,77 @@ acceptance = [
     "Mark planned requirements pending and retired requirements retired; never use implementation state as passing evidence.",
     "Remove the previous report before validation so an interrupted or invalid run cannot reuse stale evidence.",
 ]
+
+[[requirements]]
+id = "REQ-BUILD-001"
+title = "Build a freestanding kernel and independent applications"
+statement = "The build shall produce an AArch64 freestanding C23 kernel and three independently linked application ELF/bin pairs packaged into one boot image."
+status = "implemented"
+acceptance = [
+    "Compile for Cortex-A710 with -std=c23 and __STDC_VERSION__ >= 202311L; link without a hosted runtime, PIE, or dynamic linking.",
+    "Build kernel and applications with general-purpose registers only; no floating-point, SIMD, or SVE context is required.",
+    "Rebuilding an application updates its independent ELF/bin and the packaged boot image.",
+    "Reject nonempty application writable static storage, COMMON, TLS, runtime initialization sections, and images exceeding their reserved space; accept code, read-only constants, and stack-local state.",
+]
+
+[[requirements]]
+id = "REQ-BOOT-001"
+title = "Boot the learning kernel on Cortex-A710"
+statement = "The kernel shall boot on a single QEMU virt Cortex-A710 CPU with GICv3 and run at EL1 with the MMU disabled."
+status = "implemented"
+acceptance = [
+    "Boot headlessly with 128 MiB RAM, virtualization and security extensions disabled, and PL011 serial output.",
+    "Initialize the kernel stack, zero BSS, and install an aligned EL1 exception vector table before entering applications.",
+    "Runtime observations confirm CurrentEL is EL1 and SCTLR_EL1.M, C, and I are clear; unexpected entry levels produce a diagnostic and halt.",
+    "Document the verified QEMU version, machine version, device addresses, entry/load address, and compiler/binutils versions used by the executable boot test.",
+]
+
+[[requirements]]
+id = "REQ-APP-001"
+title = "Load and run three independent EL0 demos"
+statement = "The kernel shall copy three embedded application binaries into fixed physical slots and start each at EL0 with its own stack."
+status = "implemented"
+acceptance = [
+    "Validate image and stack bounds before copying; loaded bytes match their source and application slots do not overlap each other or the kernel.",
+    "Each initial context uses EL0t, its linked entry point, and a separate 16-byte-aligned stack; saved runtime stack pointers remain in that application's stack range.",
+    "Integer-sequence, prime-calculation, and checksum demos each produce identifiable progress and a correct final result using logging syscalls, then exit.",
+    "Applications use stack-local mutable state and read-only constants without requiring writable global variables; returning from app_main invokes exit.",
+]
+
+[[requirements]]
+id = "REQ-EXC-001"
+title = "Preserve integer context across EL transitions"
+statement = "The kernel shall preserve application integer execution state across EL0 exceptions and resume the selected application with ERET."
+status = "implemented"
+acceptance = [
+    "Repeated timer preemption preserves x0-x30, SP_EL0, ELR_EL1, and SPSR_EL1 including condition flags; returning syscalls change only the documented return register.",
+    "Runtime exception observations confirm an EL0t origin and EL1 handling; resumed applications have IRQ enabled while kernel handlers keep IRQ masked without nesting.",
+    "An unexpected EL0 synchronous exception reports task identity, ESR, and ELR, stops that task, and allows another runnable task to continue.",
+    "An unexpected EL1 exception reports ESR and ELR and halts instead of returning to a damaged context.",
+]
+
+[[requirements]]
+id = "REQ-SCHED-001"
+title = "Preempt applications in round-robin order"
+statement = "The kernel shall use the architectural physical timer through GICv3 to preempt EL0 applications and select the next runnable task from a fixed array."
+status = "implemented"
+acceptance = [
+    "Configure a nominal 10 ms quantum from CNTFRQ_EL0 and handle physical timer PPI 30 through the GICv3 redistributor and system-register CPU interface, rearming and completing each interrupt.",
+    "Three no-syscall busy-loop test applications make progress through at least three complete timer-driven rounds in task order; log alternation alone is not evidence of preemption.",
+    "Skip exited and faulted tasks, wrap to the first runnable task, and resume the same task when it is the only runnable one.",
+    "When no runnable tasks remain, disable the timer and report completion before idling; never resume an exited or faulted task.",
+    "Handle spurious interrupt IDs without scheduling or issuing an invalid end-of-interrupt operation.",
+]
+
+[[requirements]]
+id = "REQ-SYS-001"
+title = "Provide bounded logging and exit system calls"
+statement = "EL0 applications shall request serial logging and termination through an SVC-based EL1 system-call interface."
+status = "implemented"
+acceptance = [
+    "Use SVC #0 with x8 as the call number, x0/x1 as arguments, and x0 as the signed return value; provide log(pointer, length) and exit(status).",
+    "Log exactly the requested payload from the current application's loaded image or stack and return its byte count; a kernel task prefix is excluded from that count.",
+    "Accept lengths from 0 through 256 bytes; zero length returns zero without dereferencing the pointer, and oversized requests return -EINVAL.",
+    "Reject invalid, wrapping, cross-boundary, other-task, kernel, and device buffer ranges with -EFAULT; unknown calls return -ENOSYS without terminating the task.",
+    "Exit records the status and never returns; logging does not voluntarily yield or terminate the application, and other registers are preserved.",
+]

@@ -23,7 +23,8 @@ retired entries, never renumber/reuse them, and use Git history for changes rath
 than a separate change log. Evolving the same contract may update its entry;
 distinct behavior gets a new ID. A bug fix normally reuses its original requirement.
 Language, authorship, and Git policies live in [AGENTS.md](../AGENTS.md), not in
-artificial software requirements. No OS requirements are approved in advance.
+artificial software requirements. Implementation status and current passing evidence
+are separate: rerun the gate after changes to the first OS milestone.
 
 ## Tests and Evidence
 
@@ -74,9 +75,9 @@ review assertions against every acceptance criterion. Manual verification suppor
 must be agreed explicitly before use; do not silently substitute it for tests.
 
 Tool regressions use temporary fixture projects and subprocesses to check failure
-exit codes without recursively executing the project suite. Future QEMU tests should
-use this same runner, bound execution with timeouts, capture serial diagnostics,
-and clean up their emulator processes. Add host unit tests for hardware-independent
+exit codes without recursively executing the project suite. Kernel tests build into
+temporary directories, run QEMU with a ten-second deadline, capture serial diagnostics,
+and terminate/reap their emulator processes even on failure. Add host unit tests for hardware-independent
 logic when introduced; do not assume host success proves target behavior.
 
 ## Completion and Growth
@@ -87,10 +88,29 @@ Report unverified items explicitly. Keep explanations short and tied to the chan
 Do not auto-commit, reformat unrelated code, add placeholder subsystems, or introduce
 CI/container infrastructure until needed. A future CI job should reuse the local gate.
 
-First boot defaults: QEMU `virt`, AArch64, one CPU, headless serial. Choose and
-document the CPU model, boot entry/exception level, load address, and working tool
-versions with that requirement. Confirm real `-std=c23` freestanding cross-compilation
-support; do not silently use an older standard or install another toolchain.
+First boot target: QEMU `virt`, Cortex-A710 (Armv9-A), GICv3, one CPU, 128 MiB RAM,
+headless serial, and virtualization/security extensions disabled. The kernel runs
+at EL1, applications at EL0, initially with MMU and caches off. Document the
+verified versioned machine, device addresses, entry exception level, load address,
+and working tool versions with the boot test. Fixed device addresses are scoped
+to that tested platform, not a portability guarantee across QEMU versions.
+Confirm real `-std=c23` freestanding cross-compilation for Cortex-A710; do not
+silently use an older standard or install another toolchain. An existing Linux
+cross compiler is acceptable with freestanding flags and no hosted link inputs.
+
+The [first milestone design](../README.md#first-os-milestone) explains the small
+execution path and exclusions. Add code in boot, EL0/syscall, and preemption
+increments, testing each before adding the next. Keep new requirements planned
+until their implementations and linked behavioral tests exist. Missing QEMU or
+compilers blocks acceptance; no source-text tests or skips substitute for execution.
+
+Run `.venv/bin/python -m unittest tests.test_kernel -v` for the OS slice, then the
+full gate. The host scheduler harness exhausts all three-task runnable combinations.
+QEMU fixtures check no-SVC preemption with integer register patterns, syscall
+boundaries, EL0/EL1 faults, spurious interrupts, and task termination. Test-only
+compile flags enable narrow observations in the real handler, not a second scheduler.
+Normal builds omit them. The BSS test dirties BSS before startup clears it, rather
+than relying on QEMU's initially zero RAM.
 
 ## Licensing
 
