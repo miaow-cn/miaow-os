@@ -1,0 +1,39 @@
+# SPDX-FileCopyrightText: 2026 miaow <guoyr_2013@hotmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+schema_version = 1
+
+[[requirements]]
+id = "REQ-TOOL-001"
+title = "Validate the requirement register"
+statement = "The local check shall validate the authoritative requirement register before executing tests."
+status = "implemented"
+acceptance = [
+    "Reject invalid TOML, unsupported schema versions, unknown fields, and an empty register.",
+    "Reject duplicate or malformed IDs, blank text, empty acceptance criteria, and invalid states.",
+    "Accept planned, implemented, and retired requirements with unique REQ-AREA-NNN identifiers.",
+]
+
+[[requirements]]
+id = "REQ-TOOL-002"
+title = "Enforce executable test traceability"
+statement = "The local check shall validate links from discovered unittest methods to requirement IDs."
+status = "implemented"
+acceptance = [
+    "Reject empty discovery, duplicate test IDs, missing or invalid links, and links to unknown or retired requirements.",
+    "Reject implemented requirements without tests; allow uncovered planned and retired requirements.",
+    "Support multiple tests per requirement and multiple requirements per test without running tests during link validation.",
+]
+
+[[requirements]]
+id = "REQ-TOOL-003"
+title = "Report actual verification outcomes"
+statement = "The local check shall execute the validated suite once and report current test outcomes against requirements."
+status = "implemented"
+acceptance = [
+    "Generate build/test-results.json with test IDs, requirement links, outcomes, diagnostics, and requirement summaries.",
+    "Fail the gate on structural errors, failures, errors, unexpected successes, skips, expected failures, or incomplete execution.",
+    "Preserve failed or skipped subtest outcomes even when other subtests pass; capture discovery and fixture errors.",
+    "Mark planned requirements pending and retired requirements retired; never use implementation state as passing evidence.",
+    "Remove the previous report before validation so an interrupted or invalid run cannot reuse stale evidence.",
+]

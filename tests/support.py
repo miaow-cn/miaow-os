@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: 2026 miaow <guoyr_2013@hotmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+
+def verifies(*requirement_ids):
+    def decorate(method):
+        method.requirement_ids = requirement_ids
+        return method
+
+    return decorate

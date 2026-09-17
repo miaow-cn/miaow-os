@@ -1,0 +1,17 @@
+{
+    "terminal.integrated.env.linux": {
+        "VIRTUAL_ENV": "${workspaceFolder}/.venv"
+    },
+    "terminal.integrated.profiles.linux": {
+        "bash (venv)": {
+            "path": "bash",
+            "args": ["--rcfile", "${workspaceFolder}/.vscode/venvrc.sh"]
+        }
+    },
+    "terminal.integrated.defaultProfile.linux": "bash (venv)",
+    "C_Cpp.default.compileCommands": [
+        "${workspaceFolder}/.vscode/build/compile_commands.json"
+    ],
+    "C_Cpp.clang_format_style": "file:${workspaceFolder}/.clang-format",
+    "editor.tabSize": 8
+}
