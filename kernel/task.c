@@ -15,7 +15,10 @@ static unsigned current;
 
 static void task_prefix(void)
 {
-	printk("[app %u] ", current);
+	char prefix[] = "[app 0] ";
+
+	prefix[5] = (char)('0' + current);
+	uart_puts(prefix);
 }
 
 static struct context *schedule(void)
@@ -108,7 +111,7 @@ struct context *trap(struct context *frame, uint64_t irq)
 		break;
 	case SYS_EXIT:
 		task->exit_status = (long)frame->registers[0];
-		printk("[app %u] EXIT status=%016lx\n", current, frame->registers[0]);
+		printk("[app %u] EXIT status=%ld\n", current, frame->registers[0]);
 		task->runnable = false;
 		return schedule();
 	default:

@@ -94,7 +94,7 @@ class KernelTests(unittest.TestCase):
         self.assertNotIn("FAULT", output)
         for index in range(3):
             self.assertIn(f"LOADED app={index} image={0x41000000 + index * 0x20000:016x} stack={0x41020000 + index * 0x20000:016x} copy=OK", output)
-            self.assertEqual(output.count(f"[app {index}] EXIT status=0000000000000000"), 1)
+            self.assertEqual(output.count(f"[app {index}] EXIT status=0"), 1)
         self.assertIn("[app 0] sequence result=4500001500000\n", output)
         self.assertIn("[app 1] primes result=9592\n", output)
         self.assertIn("[app 2] checksum result=510000000\n", output)
@@ -125,11 +125,11 @@ class KernelTests(unittest.TestCase):
         self.assertNotIn("ERROR", output)
         self.assertIn("[app 0] " + "Z" * 256 + "[app 0] \n", output)
         self.assertIn("[app 0] syscalls OK\n", output)
-        self.assertIn("[app 0] EXIT status=0000000000000000", output)
+        self.assertIn("[app 0] EXIT status=0", output)
         self.assertRegex(output, r"\[app 1\] FAULT ESR=[0-9a-f]{16} ELR=000000004102[0-9a-f]{4}")
         self.assertNotIn("[app 1] EXIT", output)
         self.assertIn("[app 2] checksum result=510000000", output)
-        self.assertIn("[app 2] EXIT status=0000000000000000", output)
+        self.assertIn("[app 2] EXIT status=0", output)
 
     @verifies("REQ-EXC-001", "REQ-SYS-001")
     def test_syscall_preserves_registers(self):
@@ -139,7 +139,7 @@ class KernelTests(unittest.TestCase):
         self.assertNotIn("PANIC", output)
         self.assertNotIn("FAULT", output)
         for index in range(3):
-            self.assertIn(f"[app {index}] EXIT status=0000000000000000", output)
+            self.assertIn(f"[app {index}] EXIT status=0", output)
 
     @verifies("REQ-EXC-001", "REQ-PRINT-001")
     def test_kernel_fault_halts(self):
@@ -190,7 +190,7 @@ class KernelTests(unittest.TestCase):
                 [artifact.stat().st_mtime_ns for artifact in artifacts[4:]], timestamps[4:],
             )
             output = emulate(image, "ALL APPS DONE\n")
-        self.assertIn("[app 0] EXIT status=0000000000000007\n", output)
+        self.assertIn("[app 0] EXIT status=7\n", output)
 
     @verifies("REQ-BUILD-001")
     def test_reconfigures_app_and_flags(self):
@@ -201,7 +201,7 @@ class KernelTests(unittest.TestCase):
             for status in (7, 9):
                 build(directory, f"APP0={source}", f"EXTRA_CFLAGS=-DAPP_STATUS={status}")
                 output = emulate(Path(directory) / "kernel.bin", "ALL APPS DONE\n")
-                self.assertIn(f"[app 0] EXIT status={status:016x}\n", output)
+                self.assertIn(f"[app 0] EXIT status={status}\n", output)
                 self.assertNotIn("sequence result=", output)
 
     @verifies("REQ-PRINT-001")
@@ -241,7 +241,7 @@ class KernelTests(unittest.TestCase):
             output = emulate(Path(directory) / "kernel.bin", "SWITCH 2 -> 2\n", occurrences=3)
         self.assertNotIn("PANIC", output)
         self.assertIn("SPURIOUS OK\n", output)
-        self.assertIn("[app 0] EXIT status=0000000000000000", output)
+        self.assertIn("[app 0] EXIT status=0", output)
         self.assertIn("[app 1] FAULT", output)
         switches = re.findall(r"SWITCH (\d) -> (\d)", output)
         survivor = switches.index(("2", "2"))
