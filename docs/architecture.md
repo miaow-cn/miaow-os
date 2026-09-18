@@ -8,7 +8,7 @@ behavior and acceptance criteria remain in [requirements.toml](requirements.toml
 
 ## Platform and Addresses
 
-The tested command is provided by `make run`:
+The tested command is provided by `cmake --build build/os --target run`:
 
 ```sh
 qemu-system-aarch64 \

@@ -57,18 +57,19 @@ and a short source-reading order. The fixed device addresses are tested on
 
 ## Quick Start
 
-Requires GNU Make, C23-capable AArch64 GCC/binutils, QEMU with Cortex-A710 and
+Requires CMake 3.21+, Ninja, C23-capable AArch64 GCC/binutils, QEMU with Cortex-A710 and
 `virt-10.1` support, a C23-capable host `cc` for the scheduler test, and Python
 3.11+ with `venv`. No third-party Python packages are needed. On Fedora, missing
-tools can be installed manually with `sudo dnf install make gcc gcc-aarch64-linux-gnu
+tools can be installed manually with `sudo dnf install cmake ninja-build gcc gcc-aarch64-linux-gnu
 binutils-aarch64-linux-gnu qemu-system-aarch64 python3`.
 
 Run from the repository root:
 
 ```sh
 python3 -m venv .venv
-make
-make run
+cmake -S . -B build -G Ninja
+cmake --build build
+cmake --build build --target run
 ```
 
 The demos report sequence result `4500001500000`, prime count `9592`, and checksum
@@ -87,12 +88,31 @@ passed; planned requirements can remain pending. `.venv` and `build` are ignored
 If Python or `venv` is unavailable, install it through your OS package manager first.
 Agents must leave system installation to you.
 
-The default output is `build/os/kernel.bin`, with kernel symbols in
-`build/os/kernel.elf` and independent app ELF/bin files under `build/os/apps/`.
-`CROSS_COMPILE` defaults to `aarch64-linux-gnu-`. An alternate compatible toolchain
-can be selected explicitly. Use a fresh `BUILD` directory when changing compiler
-flags, toolchains, or `APP0`/`APP1`/`APP2` overrides; ordinary source edits rebuild
-their objects and repack the image automatically.
+The default output is `build/kernel.bin`, with kernel symbols in
+`build/kernel.elf` and independent app ELF/bin files under `build/apps/`.
+The default [toolchain file](cmake/aarch64.cmake) uses the `aarch64-linux-gnu-`
+prefix. Select another compatible prefix with `-DCROSS_COMPILE=...` on the initial
+configure, or supply your own `-DCMAKE_TOOLCHAIN_FILE=...`. Use a fresh build
+directory when changing toolchains.
+
+Application sources and extra compiler flags are CMake cache options. They can be
+changed by reconfiguring the same build directory; ordinary source edits only need
+`cmake --build`. For example:
+
+```sh
+cmake -S . -B build/preempt -G Ninja \
+	-DAPP0=tests/fixtures/spin.S \
+	-DAPP1=tests/fixtures/spin.S \
+	-DAPP2=tests/fixtures/spin.S \
+	-DEXTRA_CFLAGS=-DTEST_PREEMPT
+cmake --build build/preempt --target run
+```
+
+Options persist until explicitly changed or reset (for example,
+`-DAPP0=apps/sequence.c -DEXTRA_CFLAGS=`). CMake tracks header, linker-script, and
+application-binary dependencies and repackages the image when needed. The `run`
+target builds the image before starting QEMU. To clean generated build outputs,
+use `cmake --build build --target clean`.
 
 ## Working With Agents
 
@@ -112,7 +132,7 @@ Git commits and pushes remain explicit user actions.
 - [Tooling tests](tests/test_workflow.py): executable examples of traceability.
 - [Kernel tests](tests/test_kernel.py): bounded QEMU and host behavioral checks.
 
-Kernel work needs GNU Make, C23-capable AArch64 GCC/binutils, and
+Kernel work needs CMake, Ninja, C23-capable AArch64 GCC/binutils, and
 `qemu-system-aarch64`; an AArch64-capable GDB is optional. An available
 `aarch64-linux-gnu-` toolchain can build freestanding code when explicitly linked
 without Linux startup files or libraries; a new `aarch64-none-elf-` installation
@@ -122,6 +142,7 @@ Verified on Fedora 43 WSL on 2026-09-17: QEMU 10.1.5,
 `aarch64-linux-gnu-gcc` 15.2.1, GNU binutils 2.45, host GCC 15.3.1, and Python
 3.14.7. The actual kernel/apps build uses `-std=c23 -mcpu=cortex-a710` and
 checks `__STDC_VERSION__ >= 202311L`, not a fallback to an older C standard.
+The CMake build was verified with CMake 3.31.11 and Ninja 1.13.1 on 2026-09-18.
 
 ## License
 

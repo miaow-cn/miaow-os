@@ -23,12 +23,17 @@ QEMU = [
 
 
 def build(directory, *options):
-    result = subprocess.run(
-        ["make", f"BUILD={directory}", *options], cwd=ROOT,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=60,
-    )
-    if result.returncode:
-        raise AssertionError(result.stdout)
+    for command in (
+        ["cmake", "-S", str(ROOT), "-B", str(directory), "-G", "Ninja",
+         *(f"-D{option}" for option in options)],
+        ["cmake", "--build", str(directory), "--parallel", "2"],
+    ):
+        result = subprocess.run(
+            command, cwd=ROOT, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, text=True, timeout=60,
+        )
+        if result.returncode:
+            raise AssertionError(result.stdout)
 
 
 def emulate(image, marker, extra=(), occurrences=1):
@@ -168,12 +173,36 @@ class KernelTests(unittest.TestCase):
             image = Path(directory) / "kernel.bin"
             before = image.read_bytes()
             app_before = (Path(directory) / "apps/0.bin").read_bytes()
+            artifacts = [Path(directory) / name for name in (
+                "kernel.elf", "kernel.bin", "apps/0.elf", "apps/0.bin",
+                "apps/1.elf", "apps/1.bin", "apps/2.elf", "apps/2.bin",
+            )]
+            timestamps = [artifact.stat().st_mtime_ns for artifact in artifacts]
+            build(directory, f"APP0={source}")
+            self.assertEqual(
+                [artifact.stat().st_mtime_ns for artifact in artifacts], timestamps,
+            )
             source.write_text("int app_main(void) { return 7; }\n")
             build(directory, f"APP0={source}")
             self.assertNotEqual((Path(directory) / "apps/0.bin").read_bytes(), app_before)
             self.assertNotEqual(image.read_bytes(), before)
+            self.assertEqual(
+                [artifact.stat().st_mtime_ns for artifact in artifacts[4:]], timestamps[4:],
+            )
             output = emulate(image, "ALL APPS DONE\n")
         self.assertIn("[app 0] EXIT status=0000000000000007\n", output)
+
+    @verifies("REQ-BUILD-001")
+    def test_reconfigures_app_and_flags(self):
+        with tempfile.TemporaryDirectory(prefix="miaow build ") as directory:
+            source = Path(directory) / "replacement.c"
+            source.write_text("int app_main(void) { return APP_STATUS; }\n")
+            build(directory)
+            for status in (7, 9):
+                build(directory, f"APP0={source}", f"EXTRA_CFLAGS=-DAPP_STATUS={status}")
+                output = emulate(Path(directory) / "kernel.bin", "ALL APPS DONE\n")
+                self.assertIn(f"[app 0] EXIT status={status:016x}\n", output)
+                self.assertNotIn("sequence result=", output)
 
     @verifies("REQ-PRINT-001")
     def test_formatter_on_host(self):
