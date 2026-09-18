@@ -16,8 +16,14 @@
 #error "The kernel requires C23"
 #endif
 
-#define READ_SYSREG(name) ({ uint64_t value; __asm__ volatile("mrs %0, " #name : "=r"(value)); value; })
-#define WRITE_SYSREG(name, value) __asm__ volatile("msr " #name ", %0" : : "r"((uint64_t)(value)) : "memory")
+#define READ_SYSREG(name)                                                                          \
+	({                                                                                         \
+		uint64_t value;                                                                    \
+		__asm__ volatile("mrs %0, " #name : "=r"(value));                                  \
+		value;                                                                             \
+	})
+#define WRITE_SYSREG(name, value)                                                                  \
+	__asm__ volatile("msr " #name ", %0" : : "r"((uint64_t)(value)) : "memory")
 
 void uart_putc(char character);
 void uart_puts(const char *text);
