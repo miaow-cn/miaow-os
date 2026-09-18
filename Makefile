@@ -9,7 +9,7 @@ BUILD ?= build/os
 CFLAGS := -std=c23 -O2 -g -Wall -Wextra -Werror -ffreestanding -fno-builtin -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -mgeneral-regs-only -mno-outline-atomics -mcpu=cortex-a710 -Iinclude -Ikernel
 QEMU := qemu-system-aarch64
 QEMU_FLAGS := -machine virt-10.1,gic-version=3,virtualization=off,secure=off,its=off -cpu cortex-a710 -smp 1 -m 128M -display none -serial stdio -monitor none -no-reboot
-KERNEL_OBJECTS := $(addprefix $(BUILD)/kernel/,boot.o vectors.o main.o uart.o task.o timer.o payloads.o)
+KERNEL_OBJECTS := $(addprefix $(BUILD)/kernel/,boot.o vectors.o main.o uart.o task.o timer.o payloads.o) $(addprefix $(BUILD)/lib/,printk.o vsprintf.o)
 APP0 ?= apps/sequence.c
 APP1 ?= apps/primes.c
 APP2 ?= apps/checksum.c
@@ -48,6 +48,10 @@ $(BUILD)/kernel/%.o: kernel/%.c kernel/kernel.h
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 $(BUILD)/kernel/%.o: kernel/%.S
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+
+$(BUILD)/lib/%.o: lib/%.c
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 

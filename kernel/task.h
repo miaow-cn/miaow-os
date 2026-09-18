@@ -1,7 +1,11 @@
-/* SPDX-FileCopyrightText: 2026 miaow <guoyr_2013@hotmail.com> */
-/* SPDX-License-Identifier: GPL-3.0-or-later */
+/*
+ * SPDX-FileCopyrightText: 2026 miaow <guoyr_2013@hotmail.com>
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 
-#pragma once
+#ifndef _TASK_H
+#define _TASK_H
 
 #include "context.h"
 #include "abi.h"
@@ -27,3 +31,5 @@ static inline int next_runnable(const struct task tasks[APP_COUNT], unsigned cur
 	}
 	return -1;
 }
+
+#endif /* _TASK_H */

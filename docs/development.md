@@ -126,3 +126,4 @@ compatibility decision. Preserve upstream notices and provide required license
 texts. Do not relabel upstream code as original GPL code. Any open-source project
 may be evaluated, but not every license can be combined into a GPL-distributed
 work; use a compatible alternative or a legally appropriate separation when needed.
+The inventory lives in [third-party.md](third-party.md).

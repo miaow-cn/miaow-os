@@ -1,7 +1,11 @@
-/* SPDX-FileCopyrightText: 2026 miaow <guoyr_2013@hotmail.com> */
-/* SPDX-License-Identifier: GPL-3.0-or-later */
+/*
+ * SPDX-FileCopyrightText: 2026 miaow <guoyr_2013@hotmail.com>
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 
-#pragma once
+#ifndef _APP_H
+#define _APP_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -48,3 +52,5 @@ static inline void log_value(const char *label, uint64_t value)
 	buffer[length++] = '\n';
 	syscall(SYS_LOG, (uintptr_t)buffer, length);
 }
+
+#endif /* _APP_H */

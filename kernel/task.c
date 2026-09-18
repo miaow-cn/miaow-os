@@ -1,19 +1,21 @@
-/* SPDX-FileCopyrightText: 2026 miaow <guoyr_2013@hotmail.com> */
-/* SPDX-License-Identifier: GPL-3.0-or-later */
+/*
+ * SPDX-FileCopyrightText: 2026 miaow <guoyr_2013@hotmail.com>
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 
 #include "kernel.h"
 #include "task.h"
 
-extern const unsigned char app0_start[], app0_end[], app1_start[], app1_end[], app2_start[], app2_end[];
+extern const unsigned char app0_start[], app0_end[], app1_start[], app1_end[], app2_start[],
+	app2_end[];
 
 static struct task tasks[APP_COUNT];
 static unsigned current;
 
 static void task_prefix(void)
 {
-	uart_puts("[app ");
-	uart_putc('0' + current);
-	uart_puts("] ");
+	printk("[app %u] ", current);
 }
 
 static struct context *schedule(void)
@@ -21,11 +23,7 @@ static struct context *schedule(void)
 	int next = next_runnable(tasks, current);
 	if (next >= 0) {
 #ifdef TEST_SCHED_TRACE
-		uart_puts("SWITCH ");
-		uart_putc('0' + current);
-		uart_puts(" -> ");
-		uart_putc('0' + next);
-		uart_putc('\n');
+		printk("SWITCH %u -> %u\n", current, (unsigned)next);
 #endif
 		current = (unsigned)next;
 		timer_rearm();
@@ -35,7 +33,7 @@ static struct context *schedule(void)
 	if (READ_SYSREG(cntp_ctl_el0) & 1) {
 		kernel_panic();
 	}
-	uart_puts("ALL APPS DONE\n");
+	printk("ALL APPS DONE\n");
 	for (;;) {
 		__asm__ volatile("wfi");
 	}
@@ -74,12 +72,8 @@ struct context *trap(struct context *frame, uint64_t irq)
 	}
 	task->context = *frame;
 	if (!task->observed) {
-		task_prefix();
-		uart_puts("TRAP origin=");
-		uart_hex(frame->pstate & 0x1f);
-		uart_puts(" handler=");
-		uart_hex(READ_SYSREG(CurrentEL) >> 2);
-		uart_putc('\n');
+		printk("[app %u] TRAP origin=%016lx handler=%016lx\n", current,
+		       frame->pstate & 0x1f, READ_SYSREG(CurrentEL) >> 2);
 		task->observed = true;
 	}
 	if (irq) {
@@ -88,7 +82,8 @@ struct context *trap(struct context *frame, uint64_t irq)
 		}
 #ifdef TEST_PREEMPT
 		if (frame->pc < task->image || frame->pc >= task->image + task->size ||
-		    (frame->pstate & 0xf0000080) != 0x60000000 || frame->sp != task->stack_top - 16) {
+		    (frame->pstate & 0xf0000080) != 0x60000000 ||
+		    frame->sp != task->stack_top - 16) {
 			kernel_panic();
 		}
 		for (unsigned index = 1; index <= 30; ++index) {
@@ -96,35 +91,24 @@ struct context *trap(struct context *frame, uint64_t irq)
 				kernel_panic();
 			}
 		}
-		uart_puts("TICK app=");
-		uart_putc('0' + current);
-		uart_puts(" progress=");
-		uart_hex(frame->registers[0]);
-		uart_puts(" context=OK\n");
+		printk("TICK app=%u progress=%016lx context=OK\n", current, frame->registers[0]);
 #endif
 		return schedule();
 	}
 	uint64_t syndrome = READ_SYSREG(esr_el1);
 	if ((syndrome >> 26) != 0x15 || (syndrome & 0xffff)) {
-		task_prefix();
-		uart_puts("FAULT ESR=");
-		uart_hex(syndrome);
-		uart_puts(" ELR=");
-		uart_hex(frame->pc);
-		uart_putc('\n');
+		printk("[app %u] FAULT ESR=%016lx ELR=%016lx\n", current, syndrome, frame->pc);
 		task->runnable = false;
 		return schedule();
 	}
 	switch (frame->registers[8]) {
 	case SYS_LOG:
-		task->context.registers[0] = sys_log(task, frame->registers[0], frame->registers[1]);
+		task->context.registers[0] =
+			sys_log(task, frame->registers[0], frame->registers[1]);
 		break;
 	case SYS_EXIT:
 		task->exit_status = (long)frame->registers[0];
-		task_prefix();
-		uart_puts("EXIT status=");
-		uart_hex(frame->registers[0]);
-		uart_putc('\n');
+		printk("[app %u] EXIT status=%016lx\n", current, frame->registers[0]);
 		task->runnable = false;
 		return schedule();
 	default:
@@ -144,7 +128,8 @@ struct context *trap(struct context *frame, uint64_t irq)
 		task->size = (uintptr_t)ends[index] - (uintptr_t)starts[index];
 		task->stack_top = task->image + APP_SLOT_SIZE;
 		task->stack_bottom = task->stack_top - APP_STACK_SIZE;
-		if (!task->size || task->size > APP_IMAGE_SIZE || task->image + task->size > task->stack_bottom) {
+		if (!task->size || task->size > APP_IMAGE_SIZE ||
+		    task->image + task->size > task->stack_bottom) {
 			kernel_panic();
 		}
 		volatile unsigned char *destination = (volatile unsigned char *)task->image;
@@ -163,13 +148,8 @@ struct context *trap(struct context *frame, uint64_t irq)
 		task->context.sp = task->stack_top;
 		task->context.pstate = 0x340;
 		task->runnable = true;
-		uart_puts("LOADED app=");
-		uart_putc('0' + index);
-		uart_puts(" image=");
-		uart_hex(task->image);
-		uart_puts(" stack=");
-		uart_hex(task->stack_top);
-		uart_puts(" copy=OK\n");
+		printk("LOADED app=%u image=%016lx stack=%016lx copy=OK\n", index, task->image,
+		       task->stack_top);
 	}
 	__asm__ volatile("dsb sy\n\tisb" : : : "memory");
 	timer_init();

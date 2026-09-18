@@ -1,5 +1,8 @@
-/* SPDX-FileCopyrightText: 2026 miaow <guoyr_2013@hotmail.com> */
-/* SPDX-License-Identifier: GPL-3.0-or-later */
+/*
+ * SPDX-FileCopyrightText: 2026 miaow <guoyr_2013@hotmail.com>
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 
 #include "kernel.h"
 
@@ -8,11 +11,7 @@ static volatile uint64_t bss_probe;
 [[noreturn]] void kernel_panic(void)
 {
 	__asm__ volatile("msr daifset, #15");
-	uart_puts("PANIC EL1 ESR=");
-	uart_hex(READ_SYSREG(esr_el1));
-	uart_puts(" ELR=");
-	uart_hex(READ_SYSREG(elr_el1));
-	uart_putc('\n');
+	printk("PANIC EL1 ESR=%016lx ELR=%016lx\n", READ_SYSREG(esr_el1), READ_SYSREG(elr_el1));
 	for (;;) {
 		__asm__ volatile("wfi");
 	}
@@ -22,17 +21,10 @@ static volatile uint64_t bss_probe;
 {
 	uintptr_t stack;
 	__asm__ volatile("mov %0, sp" : "=r"(stack));
-	uart_puts("BOOT EL=");
-	uart_hex(READ_SYSREG(CurrentEL) >> 2);
-	uart_puts(" SCTLR=");
-	uart_hex(READ_SYSREG(sctlr_el1));
-	uart_puts(" VBAR=");
-	uart_hex(READ_SYSREG(vbar_el1));
-	uart_puts(" BSS=");
-	uart_hex(bss_probe);
-	uart_puts(" SP=");
-	uart_hex(stack);
-	uart_puts("\nBOOT OK\n");
+	printk("BOOT EL=%016lx SCTLR=%016lx VBAR=%016lx BSS=%016lx SP=%016lx\n",
+	       READ_SYSREG(CurrentEL) >> 2, READ_SYSREG(sctlr_el1), READ_SYSREG(vbar_el1),
+	       bss_probe, stack);
+	printk("BOOT OK\n");
 #ifdef TEST_KERNEL_FAULT
 	__asm__ volatile("udf #0");
 #endif

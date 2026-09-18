@@ -1,12 +1,16 @@
-/* SPDX-FileCopyrightText: 2026 miaow <guoyr_2013@hotmail.com> */
-/* SPDX-License-Identifier: GPL-3.0-or-later */
+/*
+ * SPDX-FileCopyrightText: 2026 miaow <guoyr_2013@hotmail.com>
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 
-#pragma once
+#ifndef _CONTEXT_H
+#define _CONTEXT_H
 
-#define FRAME_SP 248
-#define FRAME_PC 256
+#define FRAME_SP     248
+#define FRAME_PC     256
 #define FRAME_PSTATE 264
-#define FRAME_SIZE 272
+#define FRAME_SIZE   272
 
 #ifndef __ASSEMBLER__
 #include <stddef.h>
@@ -23,4 +27,6 @@ static_assert(offsetof(struct context, sp) == FRAME_SP);
 static_assert(offsetof(struct context, pc) == FRAME_PC);
 static_assert(offsetof(struct context, pstate) == FRAME_PSTATE);
 static_assert(sizeof(struct context) == FRAME_SIZE);
-#endif
+#endif /* __ASSEMBLER__ */
+
+#endif /* _CONTEXT_H */

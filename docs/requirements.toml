@@ -111,3 +111,15 @@ acceptance = [
     "Reject invalid, wrapping, cross-boundary, other-task, kernel, and device buffer ranges with -EFAULT; unknown calls return -ENOSYS without terminating the task.",
     "Exit records the status and never returns; logging does not voluntarily yield or terminate the application, and other registers are preserved.",
 ]
+
+[[requirements]]
+id = "REQ-PRINT-001"
+title = "Format kernel diagnostics through printk"
+statement = "Kernel diagnostic messages shall be produced by a printk-style variadic formatter routed to the PL011 UART."
+status = "implemented"
+acceptance = [
+    "A hosted unit test verifies snprintf/vsnprintf conversions %%, %c, %s, %d, %i, %u, %o, %x, %X, and %p with flags, width, precision, and length qualifiers, including NULL strings and exact return values.",
+    "snprintf writes at most size bytes including the terminator and returns the untruncated formatted length.",
+    "Boot, LOADED, TRAP, TICK, TIMER, PANIC, FAULT, and EXIT diagnostics keep their established textual layouts with 16-digit lowercase hexadecimal fields when emitted through printk.",
+    "The raw application log payload path stays byte-exact and does not pass through the formatter.",
+]

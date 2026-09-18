@@ -1,10 +1,16 @@
-/* SPDX-FileCopyrightText: 2026 miaow <guoyr_2013@hotmail.com> */
-/* SPDX-License-Identifier: GPL-3.0-or-later */
+/*
+ * SPDX-FileCopyrightText: 2026 miaow <guoyr_2013@hotmail.com>
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 
-#pragma once
+#ifndef _KERNEL_H
+#define _KERNEL_H
 
 #include <stddef.h>
 #include <stdint.h>
+
+#include <miaow/printk.h>
 
 #if __STDC_VERSION__ < 202311L
 #error "The kernel requires C23"
@@ -15,7 +21,6 @@
 
 void uart_putc(char character);
 void uart_puts(const char *text);
-void uart_hex(uint64_t value);
 [[noreturn]] void kernel_panic(void);
 [[noreturn]] void kernel_main(void);
 struct context;
@@ -25,3 +30,5 @@ void timer_init(void);
 void timer_rearm(void);
 void timer_stop(void);
 bool timer_interrupt(void);
+
+#endif /* _KERNEL_H */

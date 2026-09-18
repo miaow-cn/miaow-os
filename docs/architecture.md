@@ -85,7 +85,9 @@ length), and `-38` (`ENOSYS`, unknown call).
 
 [app.h](../apps/app.h) contains the small register-based wrapper and stack-based
 integer formatting. [start.S](../apps/start.S) calls `app_main()` and exits with
-its return value. There is no user libc or general `printf` implementation.
+its return value. There is no user libc or `printf` for applications. Kernel
+diagnostics go through `printk` ([printk.c](../lib/printk.c)) over the polling
+UART, while log syscall payloads stay byte-exact and bypass the formatter.
 
 ## Limits and Evidence
 

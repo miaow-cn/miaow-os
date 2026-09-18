@@ -60,7 +60,7 @@ def emulate(image, marker, extra=(), occurrences=1):
 
 
 class KernelTests(unittest.TestCase):
-    @verifies("REQ-BOOT-001")
+    @verifies("REQ-BOOT-001", "REQ-PRINT-001")
     def test_boot_el1_mmu_off(self):
         with tempfile.TemporaryDirectory() as directory:
             build(directory, "EXTRA_CFLAGS=-DTEST_DIRTY_BSS")
@@ -77,7 +77,7 @@ class KernelTests(unittest.TestCase):
         self.assertGreater(stack, vectors)
         self.assertLess(stack, 0x41000000)
 
-    @verifies("REQ-APP-001", "REQ-SYS-001", "REQ-BUILD-001")
+    @verifies("REQ-APP-001", "REQ-SYS-001", "REQ-BUILD-001", "REQ-PRINT-001")
     def test_independent_demos(self):
         with tempfile.TemporaryDirectory() as directory:
             build(directory)
@@ -94,7 +94,7 @@ class KernelTests(unittest.TestCase):
         self.assertIn("[app 1] primes result=9592\n", output)
         self.assertIn("[app 2] checksum result=510000000\n", output)
 
-    @verifies("REQ-SCHED-001", "REQ-EXC-001")
+    @verifies("REQ-SCHED-001", "REQ-EXC-001", "REQ-PRINT-001")
     def test_preempts_without_syscalls(self):
         with tempfile.TemporaryDirectory() as directory:
             build(directory, "EXTRA_CFLAGS=-DTEST_PREEMPT",
@@ -111,7 +111,7 @@ class KernelTests(unittest.TestCase):
         frequency, quantum = re.search(r"TIMER frequency=([0-9a-f]+) quantum=([0-9a-f]+)", output).groups()
         self.assertEqual(int(quantum, 16), int(frequency, 16) // 100)
 
-    @verifies("REQ-SYS-001", "REQ-EXC-001", "REQ-SCHED-001")
+    @verifies("REQ-SYS-001", "REQ-EXC-001", "REQ-SCHED-001", "REQ-PRINT-001")
     def test_syscalls_and_task_fault(self):
         with tempfile.TemporaryDirectory() as directory:
             build(directory, "APP0=tests/fixtures/syscalls.c", "APP1=tests/fixtures/fault.c")
@@ -136,7 +136,7 @@ class KernelTests(unittest.TestCase):
         for index in range(3):
             self.assertIn(f"[app {index}] EXIT status=0000000000000000", output)
 
-    @verifies("REQ-EXC-001")
+    @verifies("REQ-EXC-001", "REQ-PRINT-001")
     def test_kernel_fault_halts(self):
         with tempfile.TemporaryDirectory() as directory:
             build(directory, "EXTRA_CFLAGS=-DTEST_KERNEL_FAULT")
@@ -174,6 +174,21 @@ class KernelTests(unittest.TestCase):
             self.assertNotEqual(image.read_bytes(), before)
             output = emulate(image, "ALL APPS DONE\n")
         self.assertIn("[app 0] EXIT status=0000000000000007\n", output)
+
+    @verifies("REQ-PRINT-001")
+    def test_formatter_on_host(self):
+        with tempfile.TemporaryDirectory() as directory:
+            executable = Path(directory) / "format"
+            result = subprocess.run(
+                ["cc", "-std=c23", "-Wall", "-Wextra", "-Werror", "-ffreestanding",
+                 "-fno-builtin", "-Iinclude", "lib/vsprintf.c", "tests/fixtures/format.c",
+                 "-o", str(executable)],
+                cwd=ROOT, capture_output=True, text=True, timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            result = subprocess.run([str(executable)], capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("FORMAT OK\n", result.stdout)
 
     @verifies("REQ-SCHED-001")
     def test_scheduler_all_states(self):

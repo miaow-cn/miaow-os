@@ -1,5 +1,8 @@
-/* SPDX-FileCopyrightText: 2026 miaow <guoyr_2013@hotmail.com> */
-/* SPDX-License-Identifier: GPL-3.0-or-later */
+/*
+ * SPDX-FileCopyrightText: 2026 miaow <guoyr_2013@hotmail.com>
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 
 #include "kernel.h"
 
@@ -15,13 +18,5 @@ void uart_puts(const char *text)
 {
 	while (*text) {
 		uart_putc(*text++);
-	}
-}
-
-void uart_hex(uint64_t value)
-{
-	const char *digits = "0123456789abcdef";
-	for (int shift = 60; shift >= 0; shift -= 4) {
-		uart_putc(digits[(value >> shift) & 15]);
 	}
 }

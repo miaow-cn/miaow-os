@@ -1,11 +1,14 @@
-/* SPDX-FileCopyrightText: 2026 miaow <guoyr_2013@hotmail.com> */
-/* SPDX-License-Identifier: GPL-3.0-or-later */
+/*
+ * SPDX-FileCopyrightText: 2026 miaow <guoyr_2013@hotmail.com>
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 
 #include "kernel.h"
 
-#define GICD ((volatile uint32_t *)0x08000000)
-#define GICR ((volatile uint32_t *)0x080a0000)
-#define GICR_SGI ((volatile uint32_t *)0x080b0000)
+#define GICD      ((volatile uint32_t *)0x08000000)
+#define GICR      ((volatile uint32_t *)0x080a0000)
+#define GICR_SGI  ((volatile uint32_t *)0x080b0000)
 #define TIMER_IRQ 30
 
 static uint64_t quantum;
@@ -52,17 +55,13 @@ void timer_init(void)
 	if (timer_interrupt() || timer_interrupt()) {
 		kernel_panic();
 	}
-	uart_puts("SPURIOUS OK\n");
+	printk("SPURIOUS OK\n");
 #endif
 	quantum = READ_SYSREG(cntfrq_el0) / 100;
 	if (!quantum || quantum > 0x7fffffff) {
 		kernel_panic();
 	}
-	uart_puts("TIMER frequency=");
-	uart_hex(READ_SYSREG(cntfrq_el0));
-	uart_puts(" quantum=");
-	uart_hex(quantum);
-	uart_putc('\n');
+	printk("TIMER frequency=%016lx quantum=%016lx\n", READ_SYSREG(cntfrq_el0), quantum);
 	timer_rearm();
 }
 
