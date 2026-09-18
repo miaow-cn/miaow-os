@@ -9,6 +9,8 @@ endif()
 
 project(miaow-os LANGUAGES C ASM)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 set(EXTRA_CFLAGS "" CACHE STRING "Extra C and assembly compiler flags")
 separate_arguments(EXTRA_FLAGS NATIVE_COMMAND "${EXTRA_CFLAGS}")
 
