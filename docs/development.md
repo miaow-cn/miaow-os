@@ -112,6 +112,27 @@ compile flags enable narrow observations in the real handler, not a second sched
 Normal builds omit them. The BSS test dirties BSS before startup clears it, rather
 than relying on QEMU's initially zero RAM.
 
+## Debugging
+
+VS Code F5 ("QEMU kernel debug") builds, then starts QEMU with `-s -S` — a GDB
+stub on TCP port 1234 with the CPU halted at reset — and connects with symbols
+from `build/kernel.elf`. QEMU machine flags in `.vscode/tasks.json` mirror the
+CMake `run` target; keep them in sync. Host prerequisites are the C/C++ extension
+and an AArch64-capable GDB: Fedora's `gdb` package is built with
+`--enable-targets=aarch64-linux-gnu,...`, so the system debugger works (Debian
+and Ubuntu need `sudo apt install gdb-multiarch` instead). Stopping the session
+kills QEMU. Without VS Code:
+
+```sh
+qemu-system-aarch64 <run-target-flags> -s -S &
+gdb build/kernel.elf -ex 'target remote :1234'
+```
+
+The CPU halts at QEMU's entry stub at 0x40000000, which hands the DTB pointer
+to the kernel image at 0x40080000; break on the kernel entry and continue to
+skip it. Debug the kernel itself; apps are stripped raw binaries embedded at
+fixed addresses and have no symbol file in the debug configuration.
+
 ## Licensing
 
 Original code, docs, tests, and config use `GPL-3.0-or-later`. Add format-appropriate

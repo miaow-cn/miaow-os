@@ -8,14 +8,14 @@ behavior and acceptance criteria remain in [requirements.toml](requirements.toml
 
 ## Platform and Addresses
 
-The tested command is provided by `cmake --build build/os --target run`:
+The tested command is provided by `cmake --build build --target run`:
 
 ```sh
 qemu-system-aarch64 \
   -machine virt-10.1,gic-version=3,virtualization=off,secure=off,its=off \
   -cpu cortex-a710 -smp 1 -m 128M \
   -display none -serial stdio -monitor none -no-reboot \
-  -kernel build/os/kernel.bin
+  -kernel build/kernel.bin
 ```
 
 The raw image enters at EL1 at `0x40080000`. Other entry levels are diagnosed and

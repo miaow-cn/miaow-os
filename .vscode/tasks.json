@@ -1,0 +1,52 @@
+{
+        "version": "2.0.0",
+        "tasks": [
+                {
+                        "label": "config",
+                        "type": "shell",
+                        "command": "cmake -S . -B build -DEXTRA_CFLAGS='-Og -g'",
+                        "group": {
+                                "kind": "build",
+                        },
+                        "problemMatcher": "$gcc"
+                },
+                {
+                        "label": "build",
+                        "type": "shell",
+                        "dependsOn": "config",
+                        "command": "cmake --build build",
+                        "group": {
+                                "kind": "build",
+                                "isDefault": true
+                        },
+                        "problemMatcher": "$gcc"
+                },
+                {
+                        "label": "qemu-gdb",
+                        "type": "shell",
+                        "dependsOn": "build",
+                        "isBackground": true,
+                        "command": "exec qemu-system-aarch64 -machine virt-10.1,gic-version=3,virtualization=off,secure=off,its=off -cpu cortex-a710 -smp 1 -m 128M -display none -serial stdio -monitor none -no-reboot -kernel build/kernel.bin -chardev socket,id=gdb,host=127.0.0.1,port=1234,server=on,wait=on,nodelay=on -gdb chardev:gdb -S",
+                        "problemMatcher": {
+                                "owner": "qemu",
+                                "pattern": {
+                                        "regexp": "^(.*):(\\d+): (.*)$",
+                                        "file": 1,
+                                        "line": 2,
+                                        "message": 3
+                                },
+                                "background": {
+                                        "activeOnStart": true,
+                                        "beginsPattern": "^$",
+                                        "endsPattern": "^.*QEMU waiting for connection on:.*127\\.0\\.0\\.1:1234"
+                                }
+                        }
+                },
+                {
+                        "label": "kill-qemu",
+                        "type": "shell",
+                        "command": "pkill -f 'qemu-system-aarch6[4]' || true",
+                        "problemMatcher": []
+                }
+        ]
+}
