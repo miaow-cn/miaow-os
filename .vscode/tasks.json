@@ -2,7 +2,7 @@
         "version": "2.0.0",
         "tasks": [
                 {
-                        "label": "config",
+                        "label": "config debug",
                         "type": "shell",
                         "command": "cmake -S . -B build -DEXTRA_CFLAGS='-Og -g'",
                         "group": {
@@ -11,15 +11,29 @@
                         "problemMatcher": "$gcc"
                 },
                 {
+                        "label": "config release",
+                        "type": "shell",
+                        "command": "cmake -S . -B build",
+                        "group": {
+                                "kind": "build",
+                        },
+                        "problemMatcher": "$gcc"
+                },
+                {
                         "label": "build",
                         "type": "shell",
-                        "dependsOn": "config",
                         "command": "cmake --build build",
                         "group": {
                                 "kind": "build",
                                 "isDefault": true
                         },
                         "problemMatcher": "$gcc"
+                },
+                {
+                        "label": "run",
+                        "type": "shell",
+                        "command": "exec qemu-system-aarch64 -machine virt-10.1,gic-version=3,virtualization=off,secure=off,its=off -cpu cortex-a710 -smp 1 -m 128M -display none -serial stdio -monitor none -no-reboot -kernel build/kernel.bin",
+                        "problemMatcher": []
                 },
                 {
                         "label": "qemu-gdb",
