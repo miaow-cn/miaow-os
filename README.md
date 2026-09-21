@@ -2,7 +2,7 @@
 
 An operating-system learning project targeting QEMU AArch64. Development is incremental and requirement-driven with AI agents. The target is Cortex-A710 (Armv9-A) with GICv3 on QEMU, using one CPU, 128 MiB RAM, and a headless serial console.
 
-**Current state:** a bootable EL1 kernel with three independently built EL0 demo applications, GICv3 timer preemption, and logging/exit system calls. Linked QEMU tests exercise boot, applications, context switching, and error paths.
+**Current state:** a bootable EL1 kernel with three independently built EL0 demo applications, GICv3 timer preemption, and logging/exit system calls. Physical memory is managed by a memblock-style early allocator, a buddy page allocator, and kmalloc-style slabs; the MMU stays off. Linked QEMU tests exercise boot, applications, context switching, and error paths.
 
 See [Architecture](docs/architecture.md) for the execution path, address map, ABI, and a short source-reading order.
 

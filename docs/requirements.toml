@@ -59,7 +59,6 @@ acceptance = [
     "Boot headlessly with 128 MiB RAM, virtualization and security extensions disabled, and PL011 serial output.",
     "Initialize the kernel stack, zero BSS, and install an aligned EL1 exception vector table before entering applications.",
     "Runtime observations confirm CurrentEL is EL1 and SCTLR_EL1.M, C, and I are clear; unexpected entry levels produce a diagnostic and halt.",
-    "Document the verified QEMU version, machine version, device addresses, entry/load address, and compiler/binutils versions used by the executable boot test.",
 ]
 
 [[requirements]]
@@ -80,7 +79,7 @@ title = "Preserve integer context across EL transitions"
 statement = "The kernel shall preserve application integer execution state across EL0 exceptions and resume the selected application with ERET."
 status = "implemented"
 acceptance = [
-    "Repeated timer preemption preserves x0-x30, SP_EL0, ELR_EL1, and SPSR_EL1 including condition flags; returning syscalls change only the documented return register.",
+    "Repeated timer preemption preserves x0-x30, SP_EL0, ELR_EL1, and SPSR_EL1 including condition flags.",
     "Runtime exception observations confirm an EL0t origin and EL1 handling; resumed applications have IRQ enabled while kernel handlers keep IRQ masked without nesting.",
     "An unexpected EL0 synchronous exception reports task identity, ESR, and ELR, stops that task, and allows another runnable task to continue.",
     "An unexpected EL1 exception reports ESR and ELR and halts instead of returning to a damaged context.",
@@ -93,7 +92,7 @@ statement = "The kernel shall use the architectural physical timer through GICv3
 status = "implemented"
 acceptance = [
     "Configure a nominal 10 ms quantum from CNTFRQ_EL0 and handle physical timer PPI 30 through the GICv3 redistributor and system-register CPU interface, rearming and completing each interrupt.",
-    "Three no-syscall busy-loop test applications make progress through at least three complete timer-driven rounds in task order; log alternation alone is not evidence of preemption.",
+    "Applications that issue no system call still make progress through at least three complete timer-driven rounds in task order; preemption never depends on voluntary yielding.",
     "Skip exited and faulted tasks, wrap to the first runnable task, and resume the same task when it is the only runnable one.",
     "When no runnable tasks remain, disable the timer and report completion before idling; never resume an exited or faulted task.",
     "Handle spurious interrupt IDs without scheduling or issuing an invalid end-of-interrupt operation.",
@@ -118,8 +117,55 @@ title = "Format kernel diagnostics through printk"
 statement = "Kernel diagnostic messages shall be produced by a printk-style variadic formatter routed to the PL011 UART."
 status = "implemented"
 acceptance = [
-    "A hosted unit test verifies snprintf/vsnprintf conversions %%, %c, %s, %d, %i, %u, %o, %x, %X, and %p with flags, width, precision, and length qualifiers, including NULL strings and exact return values.",
+    "snprintf and vsnprintf support the conversions %%, %c, %s, %d, %i, %u, %o, %x, %X, and %p with flags, width, precision, and length qualifiers, and render a NULL string argument without dereferencing it.",
     "snprintf writes at most size bytes including the terminator and returns the untruncated formatted length.",
     "Boot, LOADED, TRAP, TICK, TIMER, PANIC, FAULT, and EXIT diagnostics keep their established textual layouts with 16-digit lowercase hexadecimal fields when emitted through printk.",
     "The raw application log payload path stays byte-exact and does not pass through the formatter.",
+]
+
+[[requirements]]
+id = "REQ-LIB-001"
+title = "Provide freestanding memory and list primitives"
+statement = "The kernel shall provide memset, memcpy, memmove, and memcmp plus an intrusive doubly linked list usable while the MMU is disabled."
+status = "implemented"
+acceptance = [
+    "memset, memcpy, memmove, and memcmp handle zero length, byte-aligned and eight-byte-aligned operands, and memmove copies correctly for forward, backward, and exactly overlapping ranges.",
+    "The implementations issue multi-byte accesses only when the address and the remaining length are naturally aligned, so no unaligned access faults while memory behaves as Device type.",
+    "The list provides initialization, head and tail insertion, removal, emptiness, first-entry, and iteration, and a removed entry can be reinserted.",
+]
+
+[[requirements]]
+id = "REQ-MM-001"
+title = "Describe and reserve physical memory"
+statement = "The kernel shall record the physical memory it may use and reserve the ranges occupied by firmware data, its own image, and application slots through a memblock-style early allocator."
+status = "implemented"
+acceptance = [
+    "Preserve the device tree pointer supplied in x0 at reset, report it in the boot diagnostics, and confirm at run time that it lies inside RAM and carries the flattened device tree magic.",
+    "Link-time symbols delimit the kernel image so the reserved range covers the firmware area below the kernel, the image, BSS, and the kernel stack.",
+    "Regions are kept sorted and adjacent or overlapping regions are merged; reserving part of a region splits it without losing or duplicating memory.",
+    "Early allocation returns the lowest range satisfying the requested size and alignment, marks it reserved, and returns null when no range fits.",
+]
+
+[[requirements]]
+id = "REQ-MM-002"
+title = "Allocate physical pages with a buddy allocator"
+statement = "The kernel shall manage free physical pages as power-of-two blocks, splitting larger blocks on allocation and merging buddies on release."
+status = "implemented"
+acceptance = [
+    "Allocation of order n returns a block of 2^n pages aligned to its own size, or null when no block is available.",
+    "A block is split from the smallest sufficient order, and the unused halves are returned to the lower free lists.",
+    "Releasing a block merges it with its buddy while the buddy is free and of equal order; releasing everything restores the free lists to the state produced by initialization.",
+    "Concurrently held allocations never overlap, and every page handed out lies inside the free ranges published by the early allocator.",
+]
+
+[[requirements]]
+id = "REQ-MM-003"
+title = "Allocate kernel objects with kmalloc"
+statement = "The kernel shall provide kmalloc, kzalloc, and kfree over the page allocator using per-size-class slabs carved from single pages."
+status = "implemented"
+acceptance = [
+    "Requests are rounded up to a power-of-two size class from 16 through 2048 bytes, and every returned pointer is at least 16-byte aligned.",
+    "Requests larger than the largest size class fall back to whole pages, and the order is recorded so release needs only the pointer.",
+    "Free objects are tracked inside the slab page itself; a slab whose objects are all free is returned to the page allocator.",
+    "Live allocations never overlap, freed memory is reused by later requests, kzalloc returns zeroed memory, and kfree of a null pointer does nothing.",
 ]

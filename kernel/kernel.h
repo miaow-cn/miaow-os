@@ -11,6 +11,7 @@
 #include <stdint.h>
 
 #include <miaow/printk.h>
+#include <miaow/string.h>
 
 #if __STDC_VERSION__ < 202311L
 #error "The kernel requires C23"
@@ -25,6 +26,10 @@
 #define WRITE_SYSREG(name, value)                                                                  \
 	__asm__ volatile("msr " #name ", %0" : : "r"((uint64_t)(value)) : "memory")
 
+extern const char _text[];
+extern const char _end[];
+extern uintptr_t dtb_pointer;
+
 void uart_putc(char character);
 void uart_puts(const char *text);
 [[noreturn]] void kernel_panic(void);
@@ -36,5 +41,9 @@ void timer_init(void);
 void timer_rearm(void);
 void timer_stop(void);
 bool timer_interrupt(void);
+void mem_init(void);
+#ifdef TEST_MM
+void mem_selftest(void);
+#endif
 
 #endif /* _KERNEL_H */

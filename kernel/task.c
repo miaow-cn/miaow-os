@@ -144,9 +144,7 @@ struct context *trap(struct context *frame, uint64_t irq)
 				kernel_panic();
 			}
 		}
-		for (uintptr_t address = task->stack_bottom; address < task->stack_top; ++address) {
-			*(volatile unsigned char *)address = 0;
-		}
+		memset((void *)task->stack_bottom, 0, APP_STACK_SIZE);
 		task->context.pc = task->image;
 		task->context.sp = task->stack_top;
 		task->context.pstate = 0x340;
@@ -157,14 +155,4 @@ struct context *trap(struct context *frame, uint64_t irq)
 	__asm__ volatile("dsb sy\n\tisb" : : : "memory");
 	timer_init();
 	enter_app(&tasks[0].context);
-}
-
-void *memcpy(void *destination, const void *source, size_t size)
-{
-	unsigned char *output = destination;
-	const unsigned char *input = source;
-	for (size_t index = 0; index < size; ++index) {
-		output[index] = input[index];
-	}
-	return destination;
 }

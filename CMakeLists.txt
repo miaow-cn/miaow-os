@@ -29,6 +29,7 @@ target_link_options(build_options INTERFACE
 
 add_subdirectory(apps)
 add_subdirectory(lib)
+add_subdirectory(mm)
 add_subdirectory(kernel)
 
 add_custom_target(run

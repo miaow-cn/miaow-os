@@ -13,6 +13,7 @@ PHDRS
 SECTIONS
 {
 	. = 0x40080000;
+	_text = .;
 	.text : { KEEP(*(.text.boot)) *(.text .text.*) } :code
 	.rodata : { *(.rodata .rodata.*) } :code
 	. = ALIGN(4096);
@@ -29,6 +30,7 @@ SECTIONS
 		. += 16384;
 		__stack_top = .;
 	} :data
+	_end = .;
 	ASSERT(. < 0x41000000, "Kernel overlaps application slots")
 	/DISCARD/ : { *(.comment .note* .eh_frame*) }
 }

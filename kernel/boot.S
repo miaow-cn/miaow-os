@@ -4,6 +4,7 @@
 .section .text.boot, "ax"
 .global _start
 _start:
+	mov x19, x0
 	msr daifset, #15
 	mrs x0, CurrentEL
 	cmp x0, #4
@@ -33,6 +34,8 @@ clear_bss:
 	str xzr, [x0], #8
 	b clear_bss
 bss_ready:
+	ldr x0, =dtb_pointer
+	str x19, [x0]
 	ldr x0, =vectors
 	msr vbar_el1, x0
 	isb

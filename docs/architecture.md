@@ -38,13 +38,44 @@ App addresses come from [abi.h](../include/abi.h) in both linker and C code.
 The kernel linker rejects overlap with app slots. Each app has its own ELF for
 debugging; only its flat code/constants binary is embedded and copied. Writable
 static storage, TLS, runtime initialization and oversized images fail at link time.
-There is no ELF parser, relocation loader, filesystem, or allocator.
+There is no ELF parser, relocation loader, or filesystem.
+
+## Memory Management
+
+Everything below is physical; there are no page tables yet. The layers follow
+Linux and are built in that order, each on top of the previous one.
+
+1. [memblock.c](../mm/memblock.c) describes RAM before any allocator exists. It
+   holds two sorted, merged region arrays: available memory and reserved memory.
+   `mem_init()` adds all of RAM, then reserves the firmware area and the kernel
+   image up to `_end`, the three app slots, and the device tree blob. Walking
+   memory minus reserved yields the free ranges.
+2. [page_alloc.c](../mm/page_alloc.c) is a buddy allocator over a flat
+   `struct page` array indexed by page frame number, itself allocated from
+   memblock. `alloc_pages(order)` takes the smallest sufficient block and returns
+   the unused halves to lower orders; `free_pages()` merges a block with the
+   buddy that differs only in bit `order` of its page frame number, repeatedly,
+   up to `MAX_ORDER - 1`.
+3. [slab.c](../mm/slab.c) carves single pages into one power-of-two size class
+   each, from 16 to 2048 bytes, chaining free objects through their own storage.
+   `kmalloc` above 2048 bytes falls back to whole pages and records the order in
+   the page, so `kfree` needs nothing but the pointer.
+
+QEMU leaves the device tree pointer in `x0`; [boot.S](../kernel/boot.S) saves it
+before anything else and `mem_init()` reserves the blob after checking its magic.
+Nothing parses the tree yet, so RAM extent still comes from `abi.h`.
+
+Because memory behaves as Device type while the MMU is off, every wide access
+must be naturally aligned. [string.c](../lib/string.c) only widens to 64-bit
+access when address and remaining length allow it, and free memory is never
+bulk-zeroed at boot.
 
 ## Follow the Execution
 
 1. [boot.S](../kernel/boot.S) masks exceptions, selects the EL1 stack, turns off
    MMU/caches, clears BSS, and installs the 2 KiB-aligned vector table.
-2. [main.c](../kernel/main.c) prints actual CPU control state.
+2. [main.c](../kernel/main.c) prints actual CPU control state, then `mem_init()`
+   ([init.c](../mm/init.c)) publishes the memory map and brings up the allocators.
    [task.c](../kernel/task.c) copies and compares each embedded app, clears its
    stack, and initializes its PC, SP and EL0t PSTATE.
 3. [timer.c](../kernel/timer.c) initializes the GICv3 distributor, wakes the
@@ -93,6 +124,7 @@ UART, while log syscall payloads stay byte-exact and bypass the formatter.
 
 EL0 prohibits privileged instructions, but MMU-off execution has no memory
 isolation, guard pages, or stack protection. Only trusted apps are supported.
+Applications get no memory system calls; the allocators serve the kernel only.
 All code is compiled with `-mgeneral-regs-only`; floating point, SIMD and SVE
 contexts are deliberately unsupported. ELF segment flags do not enforce memory
 permissions while the MMU is off. Caches stay off to keep copied-code startup simple.

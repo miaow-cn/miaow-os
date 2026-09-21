@@ -30,6 +30,22 @@ See [docs/development.md](docs/development.md) for schema and test conventions.
 Reuse an existing requirement for a bug fix to unchanged behavior. Keep IDs stable;
 retain retired entries and never reuse their IDs. Do not maintain a second matrix.
 
+## Linux Reference
+- The Linux checkout at `~/linux` and its Git history are the primary design
+  reference. Consult them before designing a subsystem. Prefer the earliest
+  revision that already contains the algorithm, found with `git log --follow`;
+  it is usually far smaller and clearer than current code.
+- Port rather than reinvent: copy the upstream implementation, then delete
+  everything this project does not need. Write original code only when the
+  upstream file is unusable for license reasons, or when so little would survive
+  the simplification that nothing recognizable remains. State which case applies.
+- Always simplify to learning scale: single CPU, no locking, no NUMA, zones,
+  or per-CPU caches, no debug or hardening options, and no configuration knobs.
+- Check the upstream `SPDX-License-Identifier` before copying. `GPL-2.0-or-later`
+  may be relicensed to `GPL-3.0-or-later`; `GPL-2.0-only` keeps its original
+  notices. Record the upstream path and exact commit or tag of every port in
+  [docs/third-party.md](docs/third-party.md).
+
 ## Environment and Git
 - Python: use `.venv` for environments and dependencies; prefer the standard library.
 - Do not install system tools or other language environments. Identify missing

@@ -14,7 +14,7 @@ set_target_properties(kernel PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
     LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/linker.ld"
 )
-target_link_libraries(kernel PRIVATE build_options kernel_lib)
+target_link_libraries(kernel PRIVATE build_options kernel_lib kernel_mm)
 target_link_options(kernel PRIVATE
     "LINKER:-T,${CMAKE_CURRENT_SOURCE_DIR}/linker.ld"
     "LINKER:-Map,${PROJECT_BINARY_DIR}/kernel.map"

@@ -36,6 +36,21 @@ def build(directory, *options):
             raise AssertionError(result.stdout)
 
 
+def host(name, *sources):
+    with tempfile.TemporaryDirectory() as directory:
+        executable = Path(directory) / name
+        result = subprocess.run(
+            ["cc", "-std=c23", "-Wall", "-Wextra", "-Werror", "-ffreestanding", "-fno-builtin",
+             "-Iinclude", "-Ikernel", *sources, "-o", str(executable)],
+            cwd=ROOT, capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode:
+            raise AssertionError(result.stderr)
+        result = subprocess.run([str(executable)], capture_output=True, text=True, timeout=60)
+        if result.returncode:
+            raise AssertionError(result.stdout + result.stderr)
+
+
 def emulate(image, marker, extra=(), occurrences=1):
     output = bytearray()
     with subprocess.Popen(
@@ -247,3 +262,55 @@ class KernelTests(unittest.TestCase):
         survivor = switches.index(("2", "2"))
         self.assertTrue(all(pair == ("2", "2") for pair in switches[survivor:]))
         self.assertNotIn("ALL APPS DONE", output)
+
+    @verifies("REQ-LIB-001")
+    def test_memory_primitives_on_host(self):
+        host("string", "lib/string.c", "tests/fixtures/string.c")
+
+    @verifies("REQ-LIB-001")
+    def test_list_on_host(self):
+        host("list", "tests/fixtures/list.c")
+
+    @verifies("REQ-MM-001")
+    def test_memblock_on_host(self):
+        host("memblock", "lib/string.c", "mm/memblock.c", "tests/fixtures/memblock.c")
+
+    @verifies("REQ-MM-002")
+    def test_buddy_on_host(self):
+        host("buddy", "lib/string.c", "mm/page_alloc.c", "tests/fixtures/buddy.c")
+
+    @verifies("REQ-MM-003")
+    def test_kmalloc_on_host(self):
+        host("kmalloc", "lib/string.c", "mm/page_alloc.c", "mm/slab.c",
+             "tests/fixtures/kmalloc.c")
+
+    @verifies("REQ-MM-001", "REQ-MM-002", "REQ-MM-003", "REQ-PRINT-001")
+    def test_memory_map_and_allocators(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build(directory, "EXTRA_CFLAGS=-DTEST_MM")
+            output = emulate(Path(directory) / "kernel.bin", "MM SELFTEST OK\n")
+        self.assertNotIn("PANIC", output)
+        self.assertNotIn("MM SELFTEST FAIL", output)
+        banner = re.search(r"BOOT EL=.* DTB=([0-9a-f]+)", output)
+        self.assertIsNotNone(banner, output)
+        device_tree = int(banner.group(1), 16)
+        self.assertEqual(device_tree % 8, 0)
+        self.assertTrue(0x40000000 <= device_tree < 0x48000000, output)
+        summary = re.search(r"MEM ram=([0-9a-f]+)-([0-9a-f]+) map=([0-9a-f]+) dtb=([0-9a-f]+)", output)
+        self.assertIsNotNone(summary, output)
+        start, end, page_map, reported = (int(value, 16) for value in summary.groups())
+        self.assertEqual((start, end), (0x40000000, 0x48000000))
+        self.assertEqual(reported, device_tree)
+        reserved = [(int(low, 16), int(high, 16))
+                    for low, high in re.findall(r"MEM reserved ([0-9a-f]+)-([0-9a-f]+)", output)]
+        self.assertEqual(reserved, sorted(reserved))
+        self.assertTrue(all(low < high for low, high in reserved))
+        # The firmware area, the kernel image and the page map are one reserved range.
+        self.assertTrue(any(low == 0x40000000 and high > page_map > 0x40080000
+                            for low, high in reserved), reserved)
+        self.assertIn((0x41000000, 0x41060000), reserved)
+        # Reserving the blob proves the kernel found the device tree magic there.
+        self.assertTrue(any(low <= device_tree < high for low, high in reserved), reserved)
+        free = int(re.search(r"MEM free=(\d+) KiB", output).group(1))
+        self.assertLess(free, 128 * 1024)
+        self.assertGreater(free, 100 * 1024)
