@@ -20,6 +20,14 @@
 
 static struct kmem_cache kmalloc_caches[KMALLOC_CACHES];
 
+/**
+ * @brief Initialize the kmalloc size-class caches.
+ *
+ * @details Sets up one cache per power-of-two size from KMALLOC_MIN_SIZE to
+ * KMALLOC_MAX_SIZE; objects per slab is PAGE_SIZE / size since every slab is a
+ * single page. Allocating caches lazily through slab_alloc() needs no further
+ * setup.
+ */
 void slab_init(void)
 {
 	for (unsigned index = 0; index < KMALLOC_CACHES; ++index) {
@@ -31,12 +39,27 @@ void slab_init(void)
 	}
 }
 
+/**
+ * @brief Get the free-pointer slot of a free object.
+ *
+ * @param object Free object to query.
+ * @return Address of the word at offset zero holding the next free object.
+ */
 static void **free_pointer(void *object)
 {
 	return object;
 }
 
-/* Carves a fresh page into objects chained through their own free pointers. */
+/**
+ * @brief Allocate a page and carve it into objects chained by free pointers.
+ *
+ * @details Each free object stores the address of the next one at offset zero;
+ * the list ends with NULL and starts at page->freelist. The new slab is put on
+ * the cache's partial list.
+ *
+ * @param cache Cache whose object size defines the carving.
+ * @return The new slab page, or NULL if the page allocator is out of memory.
+ */
 static struct page *new_slab(struct kmem_cache *cache)
 {
 	struct page *page = alloc_pages(0);
@@ -63,6 +86,16 @@ static struct page *new_slab(struct kmem_cache *cache)
 	return page;
 }
 
+/**
+ * @brief Allocate one object from @p cache.
+ *
+ * @details Pops the first free object of the first partial slab, growing the
+ * cache with new_slab() when no partial slab exists. A slab that becomes full
+ * is unlinked; kfree() re-lists it when it gains a free object.
+ *
+ * @param cache Size-class cache to allocate from.
+ * @return The object, or NULL if no memory is available.
+ */
 static void *slab_alloc(struct kmem_cache *cache)
 {
 	struct page *page;
@@ -87,6 +120,17 @@ static void *slab_alloc(struct kmem_cache *cache)
 	return object;
 }
 
+/**
+ * @brief Return @p object to its slab.
+ *
+ * @details Pushes the object onto the slab's freelist. An empty slab is
+ * handed back to the page allocator; a slab that was full re-enters the
+ * partial list. The @p prior freelist head tells both cases apart: NULL means
+ * the slab was full and therefore unlisted.
+ *
+ * @param page Slab owning the object.
+ * @param object Object to free; must come from @p page.
+ */
 static void slab_free(struct page *page, void *object)
 {
 	struct kmem_cache *cache = page->cache;
@@ -107,6 +151,13 @@ static void slab_free(struct page *page, void *object)
 	}
 }
 
+/**
+ * @brief Map a request size to its size-class cache index.
+ *
+ * @param size Requested size in bytes, at most KMALLOC_MAX_SIZE.
+ * @return Index into kmalloc_caches whose size is the smallest power of two
+ * no smaller than @p size.
+ */
 static unsigned kmalloc_index(size_t size)
 {
 	unsigned index = 0;
@@ -117,6 +168,16 @@ static unsigned kmalloc_index(size_t size)
 	return index;
 }
 
+/**
+ * @brief Allocate @p size bytes of kernel memory.
+ *
+ * @details Sizes up to KMALLOC_MAX_SIZE come from the matching size-class
+ * slab cache; larger requests are served directly by the page allocator with
+ * the block order recorded in page->order so kfree() needs only the pointer.
+ *
+ * @param size Number of bytes to allocate.
+ * @return Pointer to the memory, or NULL on failure or zero @p size.
+ */
 void *kmalloc(size_t size)
 {
 	if (!size) {
@@ -142,6 +203,12 @@ void *kmalloc(size_t size)
 	return slab_alloc(&kmalloc_caches[kmalloc_index(size)]);
 }
 
+/**
+ * @brief Allocate @p size bytes of zeroed kernel memory.
+ *
+ * @param size Number of bytes to allocate.
+ * @return Pointer to the zeroed memory, or NULL on failure or zero @p size.
+ */
 void *kzalloc(size_t size)
 {
 	void *object = kmalloc(size);
@@ -152,6 +219,15 @@ void *kzalloc(size_t size)
 	return object;
 }
 
+/**
+ * @brief Free memory allocated by kmalloc() or kzalloc().
+ *
+ * @details Dispatches on the page's PAGE_SLAB flag: slab objects go back to
+ * their slab, oversized blocks go back to the page allocator with the order
+ * recorded at allocation time.
+ *
+ * @param object Pointer to free; NULL is a no-op.
+ */
 void kfree(void *object)
 {
 	struct page *page;

@@ -310,8 +310,8 @@ int memblock_free(uintptr_t base, size_t size)
  * @param cursor Walk position; zero-initialize before the first call.
  * @param[out] start Base address of the free range.
  * @param[out] end End address (exclusive) of the free range.
- * @return true    A free range found.
- * @return false   No free range found.
+ * @retval true    A free range found.
+ * @retval false   No free range found.
  */
 bool memblock_next_free(struct memblock_cursor *cursor, uintptr_t *start, uintptr_t *end)
 {

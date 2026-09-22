@@ -43,7 +43,8 @@ static struct page *pfn_to_page(unsigned long pfn)
  * @brief Test whether @p pfn belongs to the managed memory range.
  *
  * @param pfn Page frame number to test.
- * @return True if @p pfn maps to an entry in @p mem_map.
+ * @retval true  @p pfn maps to an entry in @p mem_map.
+ * @retval false @p pfn does not map to an entry in @p mem_map.
  */
 static bool pfn_valid(unsigned long pfn)
 {
