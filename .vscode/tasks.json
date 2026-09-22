@@ -61,6 +61,12 @@
                         "type": "shell",
                         "command": "pkill -f 'qemu-system-aarch6[4]' || true",
                         "problemMatcher": []
+                },
+                {
+                        "label": "test",
+                        "type": "shell",
+                        "command": "python tools/check.py -v",
+                        "problemMatcher": ["$gcc"]
                 }
         ]
 }
