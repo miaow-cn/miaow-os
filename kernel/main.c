@@ -25,15 +25,9 @@ uintptr_t dtb_pointer;
 	uintptr_t stack;
 	__asm__ volatile("mov %0, sp" : "=r"(stack));
 	printk("BOOT EL=%u SCTLR=%016lx VBAR=%016lx BSS=%016lx SP=%016lx DTB=%016lx\n",
-	       (unsigned int)(READ_SYSREG(CurrentEL) >> 2), READ_SYSREG(sctlr_el1), READ_SYSREG(vbar_el1),
-	       bss_probe, stack, dtb_pointer);
+	       (unsigned int)(READ_SYSREG(CurrentEL) >> 2), READ_SYSREG(sctlr_el1),
+	       READ_SYSREG(vbar_el1), bss_probe, stack, dtb_pointer);
 	printk("BOOT OK\n");
-#ifdef TEST_KERNEL_FAULT
-	__asm__ volatile("udf #0");
-#endif
 	mem_init();
-#ifdef TEST_MM
-	mem_selftest();
-#endif
 	start_apps();
 }

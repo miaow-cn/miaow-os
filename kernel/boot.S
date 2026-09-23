@@ -19,15 +19,6 @@ _start:
 	isb
 	ldr x0, =__bss_start
 	ldr x1, =__bss_end
-#ifdef TEST_DIRTY_BSS
-	mov x2, x0
-	mov x3, #-1
-dirty_bss:
-	cmp x2, x1
-	b.hs clear_bss
-	str x3, [x2], #8
-	b dirty_bss
-#endif
 clear_bss:
 	cmp x0, x1
 	b.hs bss_ready
@@ -39,6 +30,7 @@ bss_ready:
 	ldr x0, =vectors
 	msr vbar_el1, x0
 	isb
+	bl mmu_init
 	bl kernel_main
 halt:
 	wfi

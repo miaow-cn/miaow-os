@@ -9,7 +9,7 @@
  * <miaow/sprintf.h>; local ctype and strnlen shims added; do_div()
  * replaced by plain 64-bit division (the target has hardware divide);
  * C23 [[fallthrough]] attributes added; digit tables moved to file scope
- * because this kernel runs with the MMU off, where the compiler's runtime
+ * for the original MMU-off boot path, where the compiler's runtime
  * rodata-to-stack copy of the original local arrays faults on unaligned
  * addresses. The algorithm is unchanged.
  */

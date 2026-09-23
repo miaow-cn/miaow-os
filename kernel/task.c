@@ -25,9 +25,6 @@ static struct context *schedule(void)
 {
 	int next = next_runnable(tasks, current);
 	if (next >= 0) {
-#ifdef TEST_SCHED_TRACE
-		printk("SWITCH %u -> %u\n", current, (unsigned)next);
-#endif
 		current = (unsigned)next;
 		timer_rearm();
 		return &tasks[next].context;
@@ -83,19 +80,6 @@ struct context *trap(struct context *frame, uint64_t irq)
 		if (!timer_interrupt()) {
 			return &task->context;
 		}
-#ifdef TEST_PREEMPT
-		if (frame->pc < task->image || frame->pc >= task->image + task->size ||
-		    (frame->pstate & 0xf0000080) != 0x60000000 ||
-		    frame->sp != task->stack_top - 16) {
-			kernel_panic();
-		}
-		for (unsigned index = 1; index <= 30; ++index) {
-			if (frame->registers[index] != 100 + index) {
-				kernel_panic();
-			}
-		}
-		printk("TICK app=%u progress=%016lx context=OK\n", current, frame->registers[0]);
-#endif
 		return schedule();
 	}
 	uint64_t syndrome = READ_SYSREG(esr_el1);

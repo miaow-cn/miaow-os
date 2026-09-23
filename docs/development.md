@@ -44,15 +44,27 @@ The old report is deleted before validation; structural errors yield a failing r
 
 Tool regressions use temporary fixture projects and subprocesses to check failure exit codes without recursively running the project suite. Kernel tests build into temporary directories, run QEMU with a ten-second deadline, capture serial diagnostics, and terminate/reap emulators even on failure. Add host unit tests for hardware-independent logic; host success does not prove target behavior.
 
+Production `kernel/`, `mm/`, and `lib/` sources have no test-only switches, assertion blocks, or self-test entry points. `tests/CMakeLists.txt` defines three explicit, non-default targets:  memory_test_image`, `fault_test_image`, and `timer_test_image`. For example:
+
+```sh
+cmake --build build --target memory_test_image
+```
+
+Each test image links the same `kernel_core`, `kernel_lib`, and `kernel_mm` object files as the normal image. GNU ld `--wrap=kernel_main` selects a test entry without changing production sources; the memory fixture also wraps `mem_init` to run assertions after the real initializer returns. Normal builds do not compile the fixtures. A regression verifies that building all test images preserves production objects and the normal image byte-for-byte.
+
+`tests/gdb_checks.py` runs inside GDB, not unittest discovery. The Python runner starts QEMU paused on a temporary localhost GDB port, gives the debugger a 20-second deadline, and terminates/reaps QEMU on success, error, or timeout. GDB must support AArch64 and embedded Python; set `GDB=gdb-multiarch` where needed. Missing GDB is a failed prerequisite, never a skipped test.
+
+The boot check dirties BSS externally before `_start`, checks the entire cleared range before `mmu_init` (except the saved DTB pointer), and sets `SCTLR.A` before verifying that initialization clears it. QEMU exposes `SCTLR` read-only through GDB, so the script executes `MSR SCTLR_EL1, x0; ISB; BR x1` from temporary firmware RAM at `0x40070000`, then restores those bytes and the general registers. The normal boot image contains no injection code. Scheduler checks stop at actual `trap`/`enter_app` instruction boundaries and inspect contexts and task state, without replacing the scheduler or adding trace calls. Debugger stops affect timing: these assertions prove ordering and state preservation, not wall-clock latency. Separate no-debugger runs verify actual timer-driven progress of all three no-SVC loops and completion of the normal demos.
+
 ## Completion and Growth
 
 Complete = requirements, implementation, linked tests, and affected docs agree; focused tests and full gate pass; licensing reviewed. Report unverified items explicitly; keep explanations short and tied to the change. No auto-commit, no reformatting unrelated code, no placeholder subsystems, no CI/container infrastructure until needed; a future CI job should reuse the local gate.
 
-First boot target: QEMU `virt`, Cortex-A710 (Armv9-A), GICv3, 1 CPU, 128 MiB RAM, headless serial, virtualization/security extensions off. Kernel at EL1, apps at EL0, MMU/caches initially off. Document with the boot test: verified versioned machine, device addresses, entry exception level, load address, working tool versions. Fixed addresses are scoped to that tested platform, not a portability guarantee across QEMU versions. Confirm real `-std=c23` freestanding cross-compilation for Cortex-A710; never silently downgrade the standard or install another toolchain. An existing Linux cross compiler is acceptable with freestanding flags and no hosted link inputs.
+First boot target: QEMU `virt`, Cortex-A710 (Armv9-A), GICv3, 1 CPU, 128 MiB RAM, headless serial, virtualization/security extensions off. Kernel at EL1, apps at EL0; startup enables identity-mapped MMU translation before entering C kernel main, with caches kept off. Document with the boot test: verified versioned machine, device addresses, entry exception level, load address, working tool versions. Fixed addresses are scoped to that tested platform, not a portability guarantee across QEMU versions. Confirm real `-std=c23` freestanding cross-compilation for Cortex-A710; never silently downgrade the standard or install another toolchain. An existing Linux cross compiler is acceptable with freestanding flags and no hosted link inputs.
 
 The [first milestone design](../README.md#first-os-milestone) explains the execution path and exclusions. Add code in boot → EL0/syscall → preemption increments, testing each first. Keep new requirements planned until implementation and linked behavioral tests exist. Missing QEMU or compilers blocks acceptance; source-text tests or skips are no substitute for execution.
 
-Run `.venv/bin/python -m unittest tests.test_kernel -v` for the OS slice, then the full gate. The host scheduler harness exhausts all three-task runnable combinations. QEMU fixtures check no-SVC preemption with integer register patterns, syscall boundaries, EL0/EL1 faults, spurious interrupts, and task termination. Test-only compile flags enable narrow observations in the real handler, not a second scheduler; normal builds omit them. The BSS test dirties BSS before startup clears it rather than relying on QEMU's zeroed RAM.
+Run `.venv/bin/python -m unittest tests.test_kernel -v` for the OS slice, then the full gate. The host scheduler harness exhausts all three-task runnable combinations. QEMU fixtures and external debugger checks cover no-SVC preemption with integer register patterns, syscall boundaries, EL0/EL1 faults, spurious interrupts, and task termination. The BSS check does not rely on QEMU's zeroed RAM. Shared string assertions have separate host and target entry files, not compile-time branches in the implementation.
 
 ## Debugging
 

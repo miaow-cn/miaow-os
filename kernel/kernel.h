@@ -41,9 +41,7 @@ void timer_init(void);
 void timer_rearm(void);
 void timer_stop(void);
 bool timer_interrupt(void);
+void mmu_init(void);
 void mem_init(void);
-#ifdef TEST_MM
-void mem_selftest(void);
-#endif
 
 #endif /* _KERNEL_H */

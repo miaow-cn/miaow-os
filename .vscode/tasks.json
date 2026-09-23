@@ -65,8 +65,8 @@
                 {
                         "label": "test",
                         "type": "shell",
-                        "command": "python tools/check.py -v",
-                        "problemMatcher": ["$gcc"]
+                        "command": "python tools/check.py",
+                        "problemMatcher": "$gcc"
                 }
         ]
 }

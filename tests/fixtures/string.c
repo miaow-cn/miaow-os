@@ -4,16 +4,25 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-#include <assert.h>
 #include <stdint.h>
 
 #include <miaow/string.h>
 
-#define SIZE 96
+[[noreturn]] void string_failure(int line);
 
-static unsigned char actual[SIZE];
-static unsigned char expected[SIZE];
-static unsigned char source[SIZE];
+#define assert(condition)                                                                          \
+	do {                                                                                       \
+		if (!(condition)) {                                                                \
+			string_failure(__LINE__);                                                  \
+		}                                                                                  \
+	} while (0)
+
+#define SIZE 96
+#define TEST_PAGE_SIZE 4096
+
+static alignas(TEST_PAGE_SIZE) unsigned char actual_buffer[2 * TEST_PAGE_SIZE];
+static alignas(TEST_PAGE_SIZE) unsigned char expected_buffer[2 * TEST_PAGE_SIZE];
+static alignas(TEST_PAGE_SIZE) unsigned char source_buffer[2 * TEST_PAGE_SIZE];
 
 static void fill(unsigned char *buffer, size_t size, unsigned seed)
 {
@@ -32,7 +41,7 @@ static int same(const unsigned char *left, const unsigned char *right, size_t si
 	return 1;
 }
 
-int main(void)
+static void check_memory(unsigned char *actual, unsigned char *expected, unsigned char *source)
 {
 	fill(source, SIZE, 3);
 
@@ -88,5 +97,60 @@ int main(void)
 	assert(memcmp(actual, expected, 40) == 0);
 	assert(memcmp(actual, expected, 41) < 0);
 	assert(memcmp(expected, actual, 41) > 0);
-	return 0;
+
+	for (size_t offset = 0; offset < 8; ++offset) {
+		for (size_t from = 0; from < 8; ++from) {
+			fill(actual, SIZE, 1);
+			fill(expected, SIZE, 1);
+			for (size_t index = 0; index < 48; ++index) {
+				expected[from + index] = actual[offset + index];
+			}
+			assert(memcmp(actual + offset, expected + from, 48) == 0);
+			expected[from + 47] ^= 0xff;
+			assert(memcmp(actual + offset, expected + from, 47) == 0);
+			assert(memcmp(actual + offset, expected + from, 48) ==
+			       (int)actual[offset + 47] - (int)expected[from + 47]);
+		}
+	}
+}
+
+static void check_boundary(unsigned char *end)
+{
+	static const size_t lengths[] = {0, 1, 7, 8, 9, 15, 16, 17, 31, 32, 33,
+					63, 64, 65, 4095, 4096, 4097};
+
+	for (unsigned index = 0; index < sizeof(lengths) / sizeof(lengths[0]); ++index) {
+		size_t length = lengths[index];
+		unsigned char *edge = end - length;
+		unsigned char *local = source_buffer + 1;
+
+		fill(local, length, 3);
+		edge[-1] = 0x5a;
+		assert(memset(edge, 0xa5, length) == edge);
+		for (size_t offset = 0; offset < length; ++offset) {
+			assert(edge[offset] == 0xa5);
+		}
+		assert(edge[-1] == 0x5a);
+		assert(memcpy(edge, local, length) == edge);
+		assert(edge[-1] == 0x5a);
+		assert(same(edge, local, length));
+		assert(memcmp(edge, local, length) == 0);
+		assert(memcmp(local, edge, length) == 0);
+		assert(memcpy(expected_buffer + 1, edge, length) == expected_buffer + 1);
+		assert(same(expected_buffer + 1, local, length));
+		assert(memmove(edge, edge, length) == edge);
+		assert(memmove(edge - 1, edge, length) == edge - 1);
+		assert(same(edge - 1, local, length));
+		assert(memmove(edge, edge - 1, length) == edge);
+		assert(same(edge, local, length));
+	}
+}
+
+void string_selftest(unsigned char *end)
+{
+	check_memory(actual_buffer, expected_buffer, source_buffer);
+	check_memory(actual_buffer + TEST_PAGE_SIZE - 32,
+		     expected_buffer + TEST_PAGE_SIZE - 32,
+		     source_buffer + TEST_PAGE_SIZE - 32);
+	check_boundary(end);
 }

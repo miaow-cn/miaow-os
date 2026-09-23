@@ -8,25 +8,17 @@
 
 #include <miaow/string.h>
 
-/* Memory behaves as Device type while the MMU is off, so wide accesses must be naturally aligned. */
-typedef uint64_t __attribute__((may_alias)) word_t;
+typedef uint64_t __attribute__((aligned(1), may_alias)) word_t;
 
 #define WORD_SIZE sizeof(word_t)
 
-static size_t misalignment(const void *pointer)
-{
-	return (uintptr_t)pointer & (WORD_SIZE - 1);
-}
+static_assert(alignof(word_t) == 1);
 
 void *memset(void *destination, int value, size_t size)
 {
 	unsigned char *output = destination;
 	unsigned char byte = (unsigned char)value;
 
-	while (size && misalignment(output)) {
-		*output++ = byte;
-		--size;
-	}
 	word_t pattern = (word_t)byte * 0x0101010101010101ULL;
 	while (size >= WORD_SIZE) {
 		*(word_t *)output = pattern;
@@ -44,17 +36,11 @@ void *memcpy(void *destination, const void *source, size_t size)
 	unsigned char *output = destination;
 	const unsigned char *input = source;
 
-	while (size && misalignment(output)) {
-		*output++ = *input++;
-		--size;
-	}
-	if (!misalignment(input)) {
-		while (size >= WORD_SIZE) {
-			*(word_t *)output = *(const word_t *)input;
-			output += WORD_SIZE;
-			input += WORD_SIZE;
-			size -= WORD_SIZE;
-		}
+	while (size >= WORD_SIZE) {
+		*(word_t *)output = *(const word_t *)input;
+		output += WORD_SIZE;
+		input += WORD_SIZE;
+		size -= WORD_SIZE;
 	}
 	while (size--) {
 		*output++ = *input++;
@@ -75,17 +61,11 @@ void *memmove(void *destination, const void *source, size_t size)
 	}
 	output += size;
 	input += size;
-	while (size && misalignment(output)) {
-		*--output = *--input;
-		--size;
-	}
-	if (!misalignment(input)) {
-		while (size >= WORD_SIZE) {
-			output -= WORD_SIZE;
-			input -= WORD_SIZE;
-			*(word_t *)output = *(const word_t *)input;
-			size -= WORD_SIZE;
-		}
+	while (size >= WORD_SIZE) {
+		output -= WORD_SIZE;
+		input -= WORD_SIZE;
+		*(word_t *)output = *(const word_t *)input;
+		size -= WORD_SIZE;
 	}
 	while (size--) {
 		*--output = *--input;

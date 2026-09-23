@@ -51,12 +51,6 @@ void timer_init(void)
 	WRITE_SYSREG(icc_ctlr_el1, 0);
 	WRITE_SYSREG(icc_igrpen1_el1, 1);
 	__asm__ volatile("isb" : : : "memory");
-#ifdef TEST_SPURIOUS
-	if (timer_interrupt() || timer_interrupt()) {
-		kernel_panic();
-	}
-	printk("SPURIOUS OK\n");
-#endif
 	quantum = READ_SYSREG(cntfrq_el0) / 100;
 	if (!quantum || quantum > 0x7fffffff) {
 		kernel_panic();

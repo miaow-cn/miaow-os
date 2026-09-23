@@ -46,6 +46,7 @@ status = "implemented"
 acceptance = [
     "Compile for Cortex-A710 with -std=c23 and __STDC_VERSION__ >= 202311L; link without a hosted runtime, PIE, or dynamic linking.",
     "Build kernel and applications with general-purpose registers only; no floating-point, SIMD, or SVE context is required.",
+    "Normal kernel sources contain no test-only conditional paths or self-test routines; separate test images reuse the same production object files and normal images remain independently bootable.",
     "Rebuilding an application updates its independent ELF/bin and the packaged boot image.",
     "Reject nonempty application writable static storage, COMMON, TLS, runtime initialization sections, and images exceeding their reserved space; accept code, read-only constants, and stack-local state.",
 ]
@@ -53,12 +54,12 @@ acceptance = [
 [[requirements]]
 id = "REQ-BOOT-001"
 title = "Boot the learning kernel on Cortex-A710"
-statement = "The kernel shall boot on a single QEMU virt Cortex-A710 CPU with GICv3 and run at EL1 with the MMU disabled."
+statement = "The kernel shall boot on a single QEMU virt Cortex-A710 CPU with GICv3 and run at EL1."
 status = "implemented"
 acceptance = [
     "Boot headlessly with 128 MiB RAM, virtualization and security extensions disabled, and PL011 serial output.",
     "Initialize the kernel stack, zero BSS, and install an aligned EL1 exception vector table before entering applications.",
-    "Runtime observations confirm CurrentEL is EL1 and SCTLR_EL1.M, C, and I are clear; unexpected entry levels produce a diagnostic and halt.",
+    "Runtime observations confirm CurrentEL is EL1, SCTLR_EL1.M is set, and C and I remain clear; unexpected entry levels produce a diagnostic and halt.",
 ]
 
 [[requirements]]
@@ -119,18 +120,19 @@ status = "implemented"
 acceptance = [
     "snprintf and vsnprintf support the conversions %%, %c, %s, %d, %i, %u, %o, %x, %X, and %p with flags, width, precision, and length qualifiers, and render a NULL string argument without dereferencing it.",
     "snprintf writes at most size bytes including the terminator and returns the untruncated formatted length.",
-    "Boot, LOADED, TRAP, TICK, TIMER, PANIC, FAULT, and EXIT diagnostics keep their established textual layouts with 16-digit lowercase hexadecimal fields when emitted through printk.",
+    "Boot, LOADED, TRAP, TIMER, PANIC, FAULT, and EXIT diagnostics keep their established textual layouts with 16-digit lowercase hexadecimal fields when emitted through printk.",
     "The raw application log payload path stays byte-exact and does not pass through the formatter.",
 ]
 
 [[requirements]]
 id = "REQ-LIB-001"
 title = "Provide freestanding memory and list primitives"
-statement = "The kernel shall provide memset, memcpy, memmove, and memcmp plus an intrusive doubly linked list usable while the MMU is disabled."
+statement = "The kernel shall provide memset, memcpy, memmove, and memcmp plus an intrusive doubly linked list."
 status = "implemented"
 acceptance = [
     "memset, memcpy, memmove, and memcmp handle zero length, byte-aligned and eight-byte-aligned operands, and memmove copies correctly for forward, backward, and exactly overlapping ranges.",
-    "The implementations issue multi-byte accesses only when the address and the remaining length are naturally aligned, so no unaligned access faults while memory behaves as Device type.",
+    "On Normal RAM after MMU initialization, memory primitives support every byte offset and ranges crossing 4 KiB page boundaries without reading or writing outside the requested ranges; they are not MMIO or MMU-off interfaces.",
+    "MMU initialization explicitly clears SCTLR_EL1.A so ordinary unaligned RAM loads and stores work, without disabling stack alignment checks or changing cache policy.",
     "The list provides initialization, head and tail insertion, removal, emptiness, first-entry, and iteration, and a removed entry can be reinserted.",
 ]
 
@@ -168,4 +170,16 @@ acceptance = [
     "Requests larger than the largest size class fall back to whole pages, and the order is recorded so release needs only the pointer.",
     "Free objects are tracked inside the slab page itself; a slab whose objects are all free is returned to the page allocator.",
     "Live allocations never overlap, freed memory is reused by later requests, kzalloc returns zeroed memory, and kfree of a null pointer does nothing.",
+]
+
+[[requirements]]
+id = "REQ-MM-004"
+title = "Enable boot-time identity mappings"
+statement = "The kernel shall enable the EL1 MMU with static three-level, 4 KiB identity mappings in a 39-bit TTBR0 address space while keeping instruction and data caches disabled."
+status = "implemented"
+acceptance = [
+    "Map every page of the 128 MiB RAM at its physical address as Normal non-cacheable memory with inner-shareable page descriptors, including the kernel, stack, allocator memory, device tree, and application slots.",
+    "Map the PL011 page at 0x09000000, the 64 KiB GIC distributor at 0x08000000, and the 128 KiB CPU 0 redistributor at 0x080a0000 as privileged, non-executable Device-nGnRnE memory; leave other low-address ranges unmapped.",
+    "Allow EL0 reads, writes, and execution in all three application slots through one shared compatibility mapping; no application-to-application isolation or RAM W^X is promised in this stage.",
+    "Use page-aligned static tables reserved as part of the kernel image, publish them with barriers, invalidate stale TLB entries, and disable TTBR1 walks before enabling translation.",
 ]

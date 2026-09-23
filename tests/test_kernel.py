@@ -4,6 +4,7 @@
 import os
 import re
 import selectors
+import socket
 import subprocess
 import tempfile
 import time
@@ -22,11 +23,11 @@ QEMU = [
 ]
 
 
-def build(directory, *options):
+def build(directory, *options, target="kernel_image"):
     for command in (
         ["cmake", "-S", str(ROOT), "-B", str(directory), "-G", "Ninja",
          *(f"-D{option}" for option in options)],
-        ["cmake", "--build", str(directory), "--parallel", "2"],
+        ["cmake", "--build", str(directory), "--parallel", "2", "--target", target],
     ):
         result = subprocess.run(
             command, cwd=ROOT, stdout=subprocess.PIPE,
@@ -79,17 +80,53 @@ def emulate(image, marker, extra=(), occurrences=1):
     return output.decode(errors="replace")
 
 
+def debug(image, scenario):
+    with tempfile.TemporaryDirectory() as directory:
+        serial = Path(directory) / "serial.log"
+        qemu = QEMU.copy()
+        qemu[qemu.index("-serial") + 1] = f"file:{serial}"
+        with socket.socket() as address:
+            address.bind(("127.0.0.1", 0))
+            port = address.getsockname()[1]
+        qemu += ["-kernel", str(image), "-S", "-gdb", f"tcp:127.0.0.1:{port}"]
+        command = [
+            os.environ.get("GDB", "gdb"), "-nx", "-q", "-batch", str(image.with_suffix(".elf")),
+            "-ex", "set pagination off", "-ex", "set confirm off",
+            "-ex", "set tcp auto-retry on", "-ex", "set tcp connect-timeout 5",
+            "-ex", f"target remote 127.0.0.1:{port}",
+            "-ex", f"source {ROOT / 'tests/gdb_checks.py'}",
+            "-ex", f"python {scenario}()",
+        ]
+        with subprocess.Popen(qemu, cwd=ROOT, stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT) as process:
+            try:
+                result = subprocess.run(command, cwd=ROOT, stdout=subprocess.PIPE,
+                                        stderr=subprocess.STDOUT, text=True, timeout=20)
+            finally:
+                process.terminate()
+                try:
+                    process.communicate(timeout=3)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.communicate()
+        output = serial.read_text() if serial.exists() else ""
+        if result.returncode:
+            raise AssertionError(result.stdout + output)
+        return output, result.stdout
+
+
 class KernelTests(unittest.TestCase):
-    @verifies("REQ-BOOT-001", "REQ-PRINT-001")
+    @verifies("REQ-BOOT-001", "REQ-PRINT-001", "REQ-MM-004", "REQ-LIB-001")
     def test_boot_el1_mmu_off(self):
         with tempfile.TemporaryDirectory() as directory:
-            build(directory, "EXTRA_CFLAGS=-DTEST_DIRTY_BSS")
-            output = emulate(Path(directory) / "kernel.bin", "BOOT OK\n")
+            build(directory)
+            output, observations = debug(Path(directory) / "kernel.bin", "boot")
+        self.assertIn("GDB BOOT OK", observations)
         match = re.search(r"BOOT EL=([0-9a-f]+) SCTLR=([0-9a-f]+) VBAR=([0-9a-f]+) BSS=([0-9a-f]+) SP=([0-9a-f]+)", output)
         self.assertIsNotNone(match, output)
         level, control, vectors, bss, stack = (int(value, 16) for value in match.groups())
         self.assertEqual(level, 1)
-        self.assertEqual(control & 0x1005, 0)
+        self.assertEqual(control & 0x1005, 1)
         self.assertEqual(vectors % 2048, 0)
         self.assertGreaterEqual(vectors, 0x40080000)
         self.assertEqual(bss, 0)
@@ -97,7 +134,40 @@ class KernelTests(unittest.TestCase):
         self.assertGreater(stack, vectors)
         self.assertLess(stack, 0x41000000)
 
-    @verifies("REQ-APP-001", "REQ-SYS-001", "REQ-BUILD-001", "REQ-PRINT-001")
+    @verifies("REQ-MM-004", "REQ-MM-001")
+    def test_identity_mappings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build(directory, target="memory_test_image")
+            output = emulate(Path(directory) / "memory_test.bin", "ALL APPS DONE\n")
+        self.assertNotIn("PANIC", output)
+        self.assertNotIn("FAULT", output)
+        self.assertNotIn("FAIL", output)
+        self.assertIn("MMU SELFTEST OK ram=32768 device=49\n", output)
+        self.assertIn("MM SELFTEST OK\n", output)
+        match = re.search(
+            r"MMU TCR=([0-9a-f]+) MAIR=([0-9a-f]+) TTBR0=([0-9a-f]+) "
+            r"TTBR1=([0-9a-f]+) tables=([0-9a-f]+)-([0-9a-f]+)", output,
+        )
+        self.assertIsNotNone(match, output)
+        tcr, mair, root, upper, start, end = (int(value, 16) for value in match.groups())
+        self.assertEqual(tcr, 25 | (3 << 12) | (25 << 16) | (1 << 23) | (2 << 30))
+        self.assertEqual(mair, 0x4400)
+        self.assertEqual(root, start)
+        self.assertEqual(upper, 0)
+        self.assertEqual(start % 4096, 0)
+        self.assertEqual(end - start, 69 * 4096)
+        self.assertGreaterEqual(start, 0x40080000)
+        self.assertLessEqual(end, 0x41000000)
+        reserved = [(int(low, 16), int(high, 16))
+                    for low, high in re.findall(r"MEM reserved ([0-9a-f]+)-([0-9a-f]+)", output)]
+        self.assertTrue(any(low <= start < end <= high for low, high in reserved), reserved)
+        control = re.search(r"BOOT EL=1 SCTLR=([0-9a-f]+)", output)
+        self.assertIsNotNone(control, output)
+        self.assertEqual(int(control.group(1), 16) & 0x1005, 1)
+        for index in range(3):
+            self.assertIn(f"[app {index}] EXIT status=0\n", output)
+
+    @verifies("REQ-APP-001", "REQ-SYS-001", "REQ-BUILD-001", "REQ-PRINT-001", "REQ-MM-004")
     def test_independent_demos(self):
         with tempfile.TemporaryDirectory() as directory:
             build(directory)
@@ -114,14 +184,19 @@ class KernelTests(unittest.TestCase):
         self.assertIn("[app 1] primes result=9592\n", output)
         self.assertIn("[app 2] checksum result=510000000\n", output)
 
-    @verifies("REQ-SCHED-001", "REQ-EXC-001", "REQ-PRINT-001")
+    @verifies("REQ-SCHED-001", "REQ-EXC-001", "REQ-PRINT-001", "REQ-MM-004")
     def test_preempts_without_syscalls(self):
         with tempfile.TemporaryDirectory() as directory:
-            build(directory, "EXTRA_CFLAGS=-DTEST_PREEMPT",
-                  *(f"APP{index}=tests/fixtures/spin.S" for index in range(3)))
-            output = emulate(Path(directory) / "kernel.bin", "context=OK\n", occurrences=9)
+            build(directory, *(f"APP{index}=tests/fixtures/spin.S" for index in range(3)))
+            free_run = emulate(Path(directory) / "kernel.bin",
+                               "handler=0000000000000001\n", occurrences=3)
+            output, observations = debug(Path(directory) / "kernel.bin", "preempt")
+        self.assertNotIn("PANIC", free_run)
+        for task in range(3):
+            self.assertIn(f"[app {task}] TRAP", free_run)
         self.assertNotIn("PANIC", output)
-        ticks = re.findall(r"TICK app=(\d) progress=([0-9a-f]+) context=OK", output)
+        self.assertIn("GDB PREEMPT OK", observations)
+        ticks = re.findall(r"GDB TICK app=(\d) progress=([0-9a-f]+) context=OK", observations)
         self.assertEqual([int(task) for task, _ in ticks[:9]], [0, 1, 2] * 3)
         for task in range(3):
             counts = [int(count, 16) for identifier, count in ticks if int(identifier) == task]
@@ -159,8 +234,9 @@ class KernelTests(unittest.TestCase):
     @verifies("REQ-EXC-001", "REQ-PRINT-001")
     def test_kernel_fault_halts(self):
         with tempfile.TemporaryDirectory() as directory:
-            build(directory, "EXTRA_CFLAGS=-DTEST_KERNEL_FAULT")
-            output = emulate(Path(directory) / "kernel.bin", "PANIC EL1 ESR=0000000002000000 ELR=", occurrences=1)
+            build(directory, target="fault_test_image")
+            output = emulate(Path(directory) / "fault_test.bin", "PANIC EL1 ESR=0000000002000000 ELR=", occurrences=1)
+        self.assertNotIn("FAULT SELFTEST FAIL", output)
         self.assertNotIn("LOADED", output)
         self.assertNotIn("ALL APPS DONE", output)
 
@@ -178,6 +254,33 @@ class KernelTests(unittest.TestCase):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
                 with self.assertRaisesRegex(AssertionError, "Application (static storage|image exceeds slot)"):
                     build(directory, "APP0=tests/fixtures/forbidden.c", f"EXTRA_CFLAGS=-DCASE={case}")
+
+    @verifies("REQ-BUILD-001")
+    def test_test_images_share_production_objects(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build(directory)
+            root = Path(directory)
+            image = root / "kernel.bin"
+            original = image.read_bytes()
+            for name in ("memory", "fault", "timer"):
+                self.assertFalse((root / f"{name}_test.bin").exists())
+            objects = [path for name in ("kernel", "lib", "mm")
+                       for path in (root / name).rglob("*.obj")]
+            self.assertTrue(objects)
+            before = {path: (path.stat().st_mtime_ns, path.read_bytes()) for path in objects}
+            for name in ("memory", "fault", "timer"):
+                build(directory, target=f"{name}_test_image")
+                self.assertTrue((root / f"{name}_test.bin").is_file())
+            self.assertEqual(image.read_bytes(), original)
+            self.assertEqual(
+                {path: (path.stat().st_mtime_ns, path.read_bytes()) for path in objects}, before,
+            )
+            for marker in (b"SELFTEST", b"SPURIOUS OK", b"context=OK", b"SWITCH %u"):
+                self.assertNotIn(marker, original)
+            self.assertIn(b"STRING SELFTEST OK", (root / "memory_test.bin").read_bytes())
+            output = emulate(image, "ALL APPS DONE\n")
+        self.assertNotIn("PANIC", output)
+        self.assertNotIn("FAULT", output)
 
     @verifies("REQ-BUILD-001")
     def test_repackages_changed_app(self):
@@ -250,22 +353,43 @@ class KernelTests(unittest.TestCase):
     @verifies("REQ-SCHED-001")
     def test_single_survivor_and_spurious_interrupt(self):
         with tempfile.TemporaryDirectory() as directory:
-            build(directory, "EXTRA_CFLAGS=-DTEST_SCHED_TRACE -DTEST_SPURIOUS",
-                  "APP0=tests/fixtures/syscall_registers.S", "APP1=tests/fixtures/fault.c",
+            build(directory, "APP0=tests/fixtures/syscall_registers.S", "APP1=tests/fixtures/fault.c",
                   "APP2=tests/fixtures/spin.S")
-            output = emulate(Path(directory) / "kernel.bin", "SWITCH 2 -> 2\n", occurrences=3)
+            output, observations = debug(Path(directory) / "kernel.bin", "survivor")
+            build(directory, target="timer_test_image")
+            spurious = emulate(Path(directory) / "timer_test.bin", "SPURIOUS OK\n")
+        self.assertIn("GDB SURVIVOR OK", observations)
         self.assertNotIn("PANIC", output)
-        self.assertIn("SPURIOUS OK\n", output)
+        self.assertNotIn("PANIC", spurious)
+        self.assertIn("SPURIOUS OK\n", spurious)
         self.assertIn("[app 0] EXIT status=0", output)
         self.assertIn("[app 1] FAULT", output)
-        switches = re.findall(r"SWITCH (\d) -> (\d)", output)
+        switches = re.findall(r"GDB SWITCH (\d) -> (\d)", observations)
         survivor = switches.index(("2", "2"))
         self.assertTrue(all(pair == ("2", "2") for pair in switches[survivor:]))
         self.assertNotIn("ALL APPS DONE", output)
 
     @verifies("REQ-LIB-001")
     def test_memory_primitives_on_host(self):
-        host("string", "lib/string.c", "tests/fixtures/string.c")
+        host("string", "lib/string.c", "tests/fixtures/string.c", "tests/fixtures/string_host.c")
+
+    @verifies("REQ-LIB-001", "REQ-MM-004")
+    def test_memory_primitives_on_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build(directory, target="memory_test_image")
+            output = emulate(Path(directory) / "memory_test.bin", "ALL APPS DONE\n")
+        self.assertNotIn("PANIC", output)
+        self.assertNotIn("FAULT", output)
+        self.assertNotIn("FAIL", output)
+        self.assertIn("STRING SELFTEST OK\n", output)
+        self.assertIn("MM SELFTEST OK\n", output)
+        match = re.search(r"BOOT EL=1 SCTLR=([0-9a-f]+)", output)
+        self.assertIsNotNone(match, output)
+        control = int(match.group(1), 16)
+        self.assertEqual(control & 0x1007, 1)
+        self.assertEqual(control & ((1 << 3) | (1 << 4)), (1 << 3) | (1 << 4))
+        for index in range(3):
+            self.assertIn(f"[app {index}] EXIT status=0\n", output)
 
     @verifies("REQ-LIB-001")
     def test_list_on_host(self):
@@ -284,11 +408,11 @@ class KernelTests(unittest.TestCase):
         host("kmalloc", "lib/string.c", "mm/page_alloc.c", "mm/slab.c",
              "tests/fixtures/kmalloc.c")
 
-    @verifies("REQ-MM-001", "REQ-MM-002", "REQ-MM-003", "REQ-PRINT-001")
+    @verifies("REQ-MM-001", "REQ-MM-002", "REQ-MM-003", "REQ-PRINT-001", "REQ-MM-004")
     def test_memory_map_and_allocators(self):
         with tempfile.TemporaryDirectory() as directory:
-            build(directory, "EXTRA_CFLAGS=-DTEST_MM")
-            output = emulate(Path(directory) / "kernel.bin", "MM SELFTEST OK\n")
+            build(directory, target="memory_test_image")
+            output = emulate(Path(directory) / "memory_test.bin", "MM SELFTEST OK\n")
         self.assertNotIn("PANIC", output)
         self.assertNotIn("MM SELFTEST FAIL", output)
         banner = re.search(r"BOOT EL=.* DTB=([0-9a-f]+)", output)

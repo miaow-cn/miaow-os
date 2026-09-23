@@ -42,7 +42,8 @@ There is no ELF parser, relocation loader, or filesystem.
 
 ## Memory Management
 
-Everything below is physical; there are no page tables yet. The layers follow
+The MMU is enabled before entering `kernel_main()`, but all mapped virtual
+addresses still equal their physical addresses. The allocator layers follow
 Linux and are built in that order, each on top of the previous one.
 
 1. [memblock.c](../mm/memblock.c) describes RAM before any allocator exists. It
@@ -65,15 +66,48 @@ QEMU leaves the device tree pointer in `x0`; [boot.S](../kernel/boot.S) saves it
 before anything else and `mem_init()` reserves the blob after checking its magic.
 Nothing parses the tree yet, so RAM extent still comes from `abi.h`.
 
-Because memory behaves as Device type while the MMU is off, every wide access
-must be naturally aligned. [string.c](../lib/string.c) only widens to 64-bit
-access when address and remaining length allow it, and free memory is never
-bulk-zeroed at boot.
+During early startup, before enabling the MMU, data accesses behave as Device
+type and wide accesses must be naturally aligned. Startup uses aligned stores
+and does not call the memory primitives until translation is enabled.
+[string.c](../lib/string.c) operates on Normal RAM with `SCTLR_EL1.A` cleared:
+`memset`, `memcpy`, and `memmove` use 64-bit accesses at any byte offset, then
+copy the remaining bytes without widening past the requested range.
+
+### Identity Mappings
+
+[mmu.c](../mm/mmu.c): a 39-bit TTBR0 address space with three levels (L1/L2/L3), 
+512 entries per table, and 4 KiB pages. There are no block descriptors. 
+The static table pages live in page-aligned BSS, are zeroed by startup,
+and remain reserved below `_end`. No allocator is needed to build them, 
+and the buddy allocator cannot reclaim them. TTBR1 is zero and its walks are 
+disabled with `TCR_EL1.EPD1`.
+
+| Mapping | Attribute | Access |
+| --- | --- | --- |
+| All 128 MiB RAM | Normal non-cacheable, MAIR index 1 (`0x44`) | EL1 read/write/execute |
+| Three complete app slots | Same RAM attribute | Also EL0 read/write/execute, shared by all apps |
+| PL011, 4 KiB | Device-nGnRnE, MAIR index 0 (`0x00`) | EL1 read/write, PXN and UXN |
+| GIC distributor, 64 KiB | Same Device attribute | EL1 read/write, PXN and UXN |
+| CPU 0 redistributor and SGI frame, 128 KiB | Same Device attribute | EL1 read/write, PXN and UXN |
+
+All other addresses remain unmapped. RAM descriptors request Inner Shareable;
+Normal non-cacheable and Device memory have effective Outer Shareable semantics,
+which is what `AT` reports in `PAR_EL1`. Table walks are non-cacheable. Startup
+publishes table stores with `DSB SY`, programs MAIR/TCR/TTBR, executes
+`ISB; TLBI VMALLE1; DSB SY; ISB`, then sets `SCTLR_EL1.M` followed by `ISB`.
+`A`, `C`, `I`, and `WXN` are explicitly cleared; stack alignment checks are
+preserved. PC, SP, vectors, and the return address retain
+their values across the switch because their mappings are identical.
+
+The address equality is temporary: `page_to_phys()` still returns a physical
+address. High-address kernel mappings and explicit physical/pointer conversions
+belong to the next milestone, followed by permission hardening and cache enablement.
 
 ## Follow the Execution
 
 1. [boot.S](../kernel/boot.S) masks exceptions, selects the EL1 stack, turns off
-   MMU/caches, clears BSS, and installs the 2 KiB-aligned vector table.
+   MMU/caches, clears BSS, and installs the 2 KiB-aligned vector table. It then
+   calls `mmu_init()` to enable identity translation while keeping caches off.
 2. [main.c](../kernel/main.c) prints actual CPU control state, then `mem_init()`
    ([init.c](../mm/init.c)) publishes the memory map and brings up the allocators.
    [task.c](../kernel/task.c) copies and compares each embedded app, clears its
@@ -122,16 +156,36 @@ UART, while log syscall payloads stay byte-exact and bypass the formatter.
 
 ## Limits and Evidence
 
-EL0 prohibits privileged instructions, but MMU-off execution has no memory
-isolation, guard pages, or stack protection. Only trusted apps are supported.
+EL0 prohibits privileged instructions and cannot access kernel or device pages,
+but all app slots share one mapping: there is no app-to-app isolation, no guard
+pages within the slots, and no stack execute protection. Only trusted apps are supported.
 Applications get no memory system calls; the allocators serve the kernel only.
 All code is compiled with `-mgeneral-regs-only`; floating point, SIMD and SVE
-contexts are deliberately unsupported. ELF segment flags do not enforce memory
-permissions while the MMU is off. Caches stay off to keep copied-code startup simple.
+contexts are deliberately unsupported. RAM remains writable and executable;
+ELF segment flags do not yet determine page permissions. Caches stay off to keep
+copied-code startup simple.
 
 [test_kernel.py](../tests/test_kernel.py) builds real fixtures and captures bounded
-QEMU serial output. Three no-SVC loops prove timer-driven progress and register/
-flag preservation over repeated resumes; alternating demo log lines alone do not.
+QEMU serial output. Three no-SVC loops run both without a debugger and with
+external GDB observations of nine timer exceptions. These check timer-driven
+progress, task order and register/flag preservation over repeated resumes;
+alternating demo log lines alone do not prove preemption.
 Other checks exercise syscall returns, faults, linker rejection, incremental
-repackaging, and all runnable-task combinations. Tests use separate build directories
-so instrumentation does not modify the normal demo image.
+repackaging, and all runnable-task combinations. All test-only code lives in
+`tests/`. Separate test images reuse the normal kernel object files, using
+link-time entry wrapping, without test switches or hooks in production sources.
+The normal demo image is still built and tested independently.
+
+The external boot regression dirties BSS and sets the alignment-check bit
+before the real initialization code runs. The memory test image walks tables
+from `TTBR0_EL1`, without exposing private MMU symbols, and checks every table's
+alignment, uniqueness, and reservation. It uses `AT S1E1R/W` and `AT S1E0R/W`
+on every RAM page and both device table spans, verifying physical addresses,
+effective memory attributes, user access and holes, including out-of-range and
+high addresses. The same image runs string and allocator assertions; separate
+EL1 entries exercise faults and spurious interrupt handling.
+Register observations confirm the translation geometry and cache-off state;
+allocator self-tests, timer preemption and actual EL0 execution remain separate
+behavioral checks. `AT` does not test instruction fetch: device execute-never bits
+are inspected in the live descriptors; real execute-fault tests belong to the
+permission-hardening milestone.

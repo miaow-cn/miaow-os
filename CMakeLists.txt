@@ -31,6 +31,7 @@ add_subdirectory(apps)
 add_subdirectory(lib)
 add_subdirectory(mm)
 add_subdirectory(kernel)
+add_subdirectory(tests EXCLUDE_FROM_ALL)
 
 add_custom_target(run
     COMMAND qemu-system-aarch64

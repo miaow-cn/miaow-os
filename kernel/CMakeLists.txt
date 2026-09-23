@@ -8,7 +8,10 @@ foreach(INDEX RANGE 0 2)
 endforeach()
 set_source_files_properties(payloads.S PROPERTIES OBJECT_DEPENDS "${APP_BINARIES}")
 
-add_executable(kernel boot.S vectors.S main.c uart.c task.c timer.c payloads.S)
+add_library(kernel_core OBJECT boot.S vectors.S main.c uart.c task.c timer.c payloads.S)
+target_link_libraries(kernel_core PRIVATE build_options)
+add_dependencies(kernel_core app_images)
+add_executable(kernel $<TARGET_OBJECTS:kernel_core>)
 set_target_properties(kernel PROPERTIES
     SUFFIX ".elf"
     RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"

@@ -2,17 +2,17 @@
 
 An operating-system learning project targeting QEMU AArch64. Development is incremental and requirement-driven with AI agents. The target is Cortex-A710 (Armv9-A) with GICv3 on QEMU, using one CPU, 128 MiB RAM, and a headless serial console.
 
-**Current state:** a bootable EL1 kernel with three independently built EL0 demo applications, GICv3 timer preemption, and logging/exit system calls. Physical memory is managed by a memblock-style early allocator, a buddy page allocator, and kmalloc-style slabs; the MMU stays off. Linked QEMU tests exercise boot, applications, context switching, and error paths.
+**Current state:** a bootable EL1 kernel with three independently built EL0 demo applications, GICv3 timer preemption, and logging/exit system calls. Physical memory is managed by a memblock-style early allocator, a buddy page allocator, and kmalloc-style slabs. The MMU uses 4 KiB identity mappings for RAM and devices; caches remain off and applications share one compatibility mapping without isolation from each other. Linked QEMU tests exercise address translation, boot, applications, context switching, and error paths.
 
 See [Architecture](docs/architecture.md) for the execution path, address map, ABI, and a short source-reading order.
 
 ## Quick Start
 
 Requires CMake 3.20+, Ninja, C23-capable AArch64 GCC/binutils, QEMU with Cortex-A710 and `virt-10.1` support, a C23-capable host `cc` for the scheduler test, and Python
-3.11+ with `venv`. On Fedora, missing tools can be installed manually with 
+3.11+ with `venv`. The full test suite also requires an AArch64-capable GDB with Python support. On Fedora, missing tools can be installed manually with
 
 ```sh
-sudo dnf install cmake ninja-build gcc gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu qemu-system-aarch64
+sudo dnf install cmake ninja-build gcc gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu qemu-system-aarch64 gdb
 ```
 
 Set up the Python virtual environment from the repository root:
@@ -42,8 +42,7 @@ Application sources and extra compiler flags are CMake cache options. They can b
 cmake -S . -B build/preempt -G Ninja \
 	-DAPP0=tests/fixtures/spin.S \
 	-DAPP1=tests/fixtures/spin.S \
-	-DAPP2=tests/fixtures/spin.S \
-	-DEXTRA_CFLAGS=-DTEST_PREEMPT
+	-DAPP2=tests/fixtures/spin.S
 cmake --build build/preempt --target run
 ```
 
@@ -58,6 +57,9 @@ python tools/check.py
 ```
 
 The check validates requirements and test links, executes tests, and writes the current traceability report to `build/test-results.json`. 
+
+Production sources have no test-only switches. Tests use separate entry points linked with the same kernel object files, plus external GDB observations of the normal image.
+See [Development](docs/development.md#tests-and-evidence) for test-image targets.
 
 ## Clean
 
