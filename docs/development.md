@@ -77,6 +77,8 @@ gdb build/kernel.elf -ex 'target remote :1234'
 
 The CPU halts at QEMU's entry stub at 0x40000000, which hands the DTB pointer to the kernel image at 0x40080000; break on the kernel entry and continue to skip it. Debug the kernel itself; apps are stripped raw binaries at fixed addresses with no symbol file.
 
+`.venv/bin/python tools/get.py item1 [item2 [item3 [...]]]` prints system or cpu registers and memory words from a bare reset machine (no kernel loaded), which answers "what does the hardware default to?" without a build. See the script's docstring for details.
+
 ## Licensing
 
 Original code, docs, tests, and config use `GPL-3.0-or-later`. Add format-appropriate SPDX license/copyright comments with the current year and local Git identity; use adjacent `.license` sidecars for files that cannot contain comments. Canonical license texts are unmodified and need no project copyright header; generated local reports are not authored source. Full GPLv3 text lives under `LICENSES/`.
