@@ -190,8 +190,8 @@ title = "Run the kernel at high virtual addresses"
 statement = "The kernel shall run from a TTBR1 linear map of RAM, reach devices through fixed high mappings, and leave TTBR0 with only the shared application compatibility mapping."
 status = "implemented"
 acceptance = [
-    "Link the kernel at virtual 0xffffffc000080000 and load it at physical 0x40080000; on entry to kernel_main, PC, SP, and VBAR_EL1 hold high virtual addresses inside the kernel image.",
+    "Link the kernel at virtual 0xffffffc000080000 and load it at physical 0x40080000; on entry to start_kernel, PC, SP, and VBAR_EL1 hold high virtual addresses inside the kernel image.",
     "Map physical RAM 0x40000000-0x47ffffff linearly at 0xffffffc000000000 for EL1 only, and each mapped device page at 0xffffff8000000000 plus its physical address; all other TTBR1 addresses remain unmapped.",
-    "Remove the kernel identity mapping and invalidate stale TLB entries before kernel_main, so kernel and device physical addresses are unmapped in TTBR0.",
+    "Remove the kernel identity mapping and invalidate stale TLB entries before start_kernel, so kernel and device physical addresses are unmapped in TTBR0.",
     "TTBR0 then maps only the application slots at their physical addresses with EL0 rwx permission through one shared compatibility mapping.",
 ]

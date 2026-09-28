@@ -44,7 +44,7 @@ There is no ELF parser, relocation loader, or filesystem.
 
 ## Memory Management
 
-The MMU is enabled before entering `kernel_main()`, and the kernel then runs at
+The MMU is enabled before entering `start_kernel()`, and the kernel then runs at
 high virtual addresses. The allocator layers follow
 Linux and are built in that order, each on top of the previous one.
 
@@ -115,7 +115,7 @@ The switch follows Linux's `__enable_mmu`/`__turn_mmu_on`/`__mmap_switched`:
    explicitly cleared. Its return still execute from the identity map.
 3. A `BR` enters the link-time address of `__mmap_switched` at high mapping.
    The stack and `VBAR_EL1` are reloaded with high addresses. `cpu_uninstall_idmap()`
-   clears the borrowed entries before `kernel_main()`.
+   clears the borrowed entries before `start_kernel()`.
 
 Permission hardening and cache enablement belong to the next milestones.
 

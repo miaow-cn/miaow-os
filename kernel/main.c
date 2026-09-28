@@ -20,7 +20,7 @@ uintptr_t __fdt_pointer;
 	}
 }
 
-[[noreturn]] void kernel_main(void)
+[[noreturn]] void start_kernel(void)
 {
 	uintptr_t stack;
 	__asm__ volatile("mov %0, sp" : "=r"(stack));

@@ -11,7 +11,7 @@ foreach(NAME memory fault timer)
     target_link_libraries(${NAME}_test PRIVATE build_options kernel_lib kernel_mm)
     target_link_options(${NAME}_test PRIVATE
         "LINKER:-T,${KERNEL_LINKER}"
-        "LINKER:--wrap=kernel_main"
+        "LINKER:--wrap=start_kernel"
     )
     add_dependencies(${NAME}_test kernel_linker)
     add_custom_command(

@@ -70,7 +70,7 @@
  *   TTBR0 user_root[1]        -> user[8] -> apps[0..95]
  *                                user[0..] -> ram[0..]: identity map, borrowed from the
  *                                linear map and cleared by cpu_uninstall_idmap() before
- *                                kernel_main
+ *                                start_kernel
  *
  * PAGE_OFFSET, IO_OFFSET and PHYS_OFFSET are 1 GiB aligned, so an address has the same L2
  *     and L3 index physically and in its high mapping.

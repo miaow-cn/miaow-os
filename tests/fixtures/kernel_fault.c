@@ -3,7 +3,7 @@
 
 #include "kernel.h"
 
-[[noreturn]] void __wrap_kernel_main(void)
+[[noreturn]] void __wrap_start_kernel(void)
 {
 	__asm__ volatile("udf #0");
 	printk("FAULT SELFTEST FAIL\n");

@@ -34,7 +34,7 @@ extern uintptr_t __fdt_pointer;
 void uart_putc(char character);
 void uart_puts(const char *text);
 [[noreturn]] void kernel_panic(void);
-[[noreturn]] void kernel_main(void);
+[[noreturn]] void start_kernel(void);
 struct pt_regs;
 [[noreturn]] void enter_app(struct pt_regs *regs);
 [[noreturn]] void start_apps(void);

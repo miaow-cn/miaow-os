@@ -45,7 +45,7 @@ __mmap_switched:
 	msr vbar_el1, x0
 	isb
 	bl cpu_uninstall_idmap
-	bl kernel_main
+	bl start_kernel
 halt:
 	wfi
 	b halt

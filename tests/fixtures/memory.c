@@ -8,7 +8,7 @@
 #include <miaow/slab.h>
 
 void string_selftest(unsigned char *end);
-[[noreturn]] void __real_kernel_main(void);
+[[noreturn]] void __real_start_kernel(void);
 void __real_mem_init(void);
 
 #define CHECK(condition) do { if (!(condition)) string_failure(__LINE__); } while (0)
@@ -243,9 +243,9 @@ void __wrap_mem_init(void)
 	mem_selftest();
 }
 
-[[noreturn]] void __wrap_kernel_main(void)
+[[noreturn]] void __wrap_start_kernel(void)
 {
 	string_selftest(__va(PHYS_OFFSET + RAM_SIZE));
 	printk("STRING SELFTEST OK\n");
-	__real_kernel_main();
+	__real_start_kernel();
 }
