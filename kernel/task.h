@@ -10,18 +10,18 @@
 #include "context.h"
 #include "abi.h"
 
-struct task {
-	struct context context;
+struct task_struct {
+	struct pt_regs regs;
 	uintptr_t image;
 	size_t size;
 	uintptr_t stack_bottom;
 	uintptr_t stack_top;
 	bool runnable;
 	bool observed;
-	long exit_status;
+	long exit_code;
 };
 
-static inline int next_runnable(const struct task tasks[APP_COUNT], unsigned current)
+static inline int next_runnable(const struct task_struct tasks[APP_COUNT], unsigned current)
 {
 	for (unsigned offset = 1; offset <= APP_COUNT; ++offset) {
 		unsigned next = (current + offset) % APP_COUNT;

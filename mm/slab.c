@@ -28,7 +28,7 @@ static struct kmem_cache kmalloc_caches[KMALLOC_CACHES];
  * single page. Allocating caches lazily through slab_alloc() needs no further
  * setup.
  */
-void slab_init(void)
+void kmem_cache_init(void)
 {
 	for (unsigned index = 0; index < KMALLOC_CACHES; ++index) {
 		struct kmem_cache *cache = &kmalloc_caches[index];
@@ -40,14 +40,25 @@ void slab_init(void)
 }
 
 /**
- * @brief Get the free-pointer slot of a free object.
+ * @brief Get the next free object after @p object.
  *
  * @param object Free object to query.
- * @return Address of the word at offset zero holding the next free object.
+ * @return The word at offset zero of @p object.
  */
-static void **free_pointer(void *object)
+static void *get_freepointer(void *object)
 {
-	return object;
+	return *(void **)object;
+}
+
+/**
+ * @brief Link @p object to the next free object @p fp.
+ *
+ * @param object Free object to update.
+ * @param fp Next free object, or NULL at the end of the list.
+ */
+static void set_freepointer(void *object, void *fp)
+{
+	*(void **)object = fp;
 }
 
 /**
@@ -69,20 +80,20 @@ static struct page *new_slab(struct kmem_cache *cache)
 	if (!page) {
 		return nullptr;
 	}
-	page->cache = cache;
+	page->slab = cache;
 	page->inuse = 0;
 	page->flags |= PAGE_SLAB;
 
-	start = (char *)page_to_phys(page);
+	start = page_address(page);
 	last = start;
 	for (char *object = start + cache->size; object < start + cache->objects * cache->size;
 	     object += cache->size) {
-		*free_pointer(last) = object;
+		set_freepointer(last, object);
 		last = object;
 	}
-	*free_pointer(last) = nullptr;
+	set_freepointer(last, nullptr);
 	page->freelist = start;
-	list_add(&page->list, &cache->partial);
+	list_add(&page->lru, &cache->partial);
 	return page;
 }
 
@@ -107,15 +118,15 @@ static void *slab_alloc(struct kmem_cache *cache)
 			return nullptr;
 		}
 	} else {
-		page = list_first_entry(&cache->partial, struct page, list);
+		page = list_first_entry(&cache->partial, struct page, lru);
 	}
 
 	object = page->freelist;
-	page->freelist = *free_pointer(object);
+	page->freelist = get_freepointer(object);
 	page->inuse++;
 	/* A full slab is not tracked; kfree puts it back on the partial list. */
 	if (!page->freelist) {
-		list_del(&page->list);
+		list_del(&page->lru);
 	}
 	return object;
 }
@@ -133,21 +144,21 @@ static void *slab_alloc(struct kmem_cache *cache)
  */
 static void slab_free(struct page *page, void *object)
 {
-	struct kmem_cache *cache = page->cache;
+	struct kmem_cache *cache = page->slab;
 	void *prior = page->freelist;
 
-	*free_pointer(object) = prior;
+	set_freepointer(object, prior);
 	page->freelist = object;
 	page->inuse--;
 
 	if (!page->inuse) {
 		if (prior) {
-			list_del(&page->list);
+			list_del(&page->lru);
 		}
 		page->flags &= ~PAGE_SLAB;
-		free_pages(page, 0);
+		__free_pages(page, 0);
 	} else if (!prior) {
-		list_add(&page->list, &cache->partial);
+		list_add(&page->lru, &cache->partial);
 	}
 }
 
@@ -198,7 +209,7 @@ void *kmalloc(size_t size)
 		}
 		/* Recorded so that kfree needs nothing but the pointer. */
 		page->order = order;
-		return (void *)page_to_phys(page);
+		return page_address(page);
 	}
 	return slab_alloc(&kmalloc_caches[kmalloc_index(size)]);
 }
@@ -235,10 +246,10 @@ void kfree(void *object)
 	if (!object) {
 		return;
 	}
-	page = phys_to_page((uintptr_t)object);
+	page = virt_to_page(object);
 	if (page->flags & PAGE_SLAB) {
 		slab_free(page, object);
 	} else {
-		free_pages(page, page->order);
+		__free_pages(page, page->order);
 	}
 }

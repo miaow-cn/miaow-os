@@ -5,6 +5,7 @@
  */
 
 #include "kernel.h"
+#include "abi.h"
 
 #include <miaow/memblock.h>
 #include <miaow/mm.h>
@@ -14,20 +15,20 @@
 
 static uint32_t fdt_read(uintptr_t address)
 {
-	return __builtin_bswap32(*(const volatile uint32_t *)address);
+	return __builtin_bswap32(*(const volatile uint32_t *)__va(address));
 }
 
 /* Keeps the blob QEMU left in RAM out of the allocators; nothing parses it yet. */
-static void reserve_device_tree(void)
+static void early_init_fdt_reserve_self(void)
 {
-	if (dtb_pointer < RAM_BASE || dtb_pointer >= RAM_BASE + RAM_SIZE ||
-	    dtb_pointer % alignof(uint64_t)) {
+	if (__fdt_pointer < PHYS_OFFSET || __fdt_pointer >= PHYS_OFFSET + RAM_SIZE ||
+	    __fdt_pointer % alignof(uint64_t)) {
 		return;
 	}
-	if (fdt_read(dtb_pointer) != FDT_MAGIC) {
+	if (fdt_read(__fdt_pointer) != FDT_MAGIC) {
 		return;
 	}
-	if (memblock_reserve(dtb_pointer, fdt_read(dtb_pointer + 4))) {
+	if (memblock_reserve(__fdt_pointer, fdt_read(__fdt_pointer + 4))) {
 		kernel_panic();
 	}
 }
@@ -40,30 +41,30 @@ void mem_init(void)
 	uintptr_t end;
 	uintptr_t map;
 
-	if (memblock_add(RAM_BASE, RAM_SIZE) ||
-	    memblock_reserve(RAM_BASE, (uintptr_t)_end - RAM_BASE) ||
+	if (memblock_add(PHYS_OFFSET, RAM_SIZE) ||
+	    memblock_reserve(PHYS_OFFSET, __pa(_end) - PHYS_OFFSET) ||
 	    memblock_reserve(APP_FIRST, (size_t)APP_COUNT * APP_SLOT_SIZE)) {
 		kernel_panic();
 	}
-	reserve_device_tree();
+	early_init_fdt_reserve_self();
 
-	map = memblock_alloc(pages * sizeof(struct page), alignof(struct page));
+	map = memblock_phys_alloc(pages * sizeof(struct page), alignof(struct page));
 	if (!map) {
 		kernel_panic();
 	}
-	page_alloc_init(RAM_BASE, pages, (struct page *)map);
+	free_area_init(PHYS_OFFSET, pages, __va(map));
 	while (memblock_next_free(&cursor, &start, &end)) {
-		page_alloc_free_range(start, end);
+		__free_memory_core(start, end);
 	}
-	slab_init();
+	kmem_cache_init();
 
-	printk("MEM ram=%016lx-%016lx map=%016lx dtb=%016lx\n", (uintptr_t)RAM_BASE,
-	       (uintptr_t)RAM_BASE + RAM_SIZE, map, dtb_pointer);
-	for (unsigned index = 0; index < memblock.reserved.count; ++index) {
+	printk("MEM ram=%016lx-%016lx map=%016lx dtb=%016lx\n", (uintptr_t)PHYS_OFFSET,
+	       (uintptr_t)PHYS_OFFSET + RAM_SIZE, map, __fdt_pointer);
+	for (unsigned index = 0; index < memblock.reserved.cnt; ++index) {
 		struct memblock_region *region = &memblock.reserved.regions[index];
 
 		printk("MEM reserved %016lx-%016lx\n", region->base, region->base + region->size);
 	}
-	printk("MEM free=%lu KiB\n", page_alloc_free_count() << (PAGE_SHIFT - 10));
+	printk("MEM free=%lu KiB\n", nr_free_pages() << (PAGE_SHIFT - 10));
 }
 

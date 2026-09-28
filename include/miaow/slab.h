@@ -15,11 +15,11 @@
 
 #include <miaow/list.h>
 
-#define KMALLOC_MIN_SHIFT 4
-#define KMALLOC_MAX_SHIFT 11
-#define KMALLOC_MIN_SIZE  ((size_t)1 << KMALLOC_MIN_SHIFT)
-#define KMALLOC_MAX_SIZE  ((size_t)1 << KMALLOC_MAX_SHIFT)
-#define KMALLOC_CACHES    (KMALLOC_MAX_SHIFT - KMALLOC_MIN_SHIFT + 1)
+#define KMALLOC_SHIFT_LOW  4
+#define KMALLOC_SHIFT_HIGH 11
+#define KMALLOC_MIN_SIZE   ((size_t)1 << KMALLOC_SHIFT_LOW)
+#define KMALLOC_MAX_SIZE   ((size_t)1 << KMALLOC_SHIFT_HIGH)
+#define KMALLOC_CACHES     (KMALLOC_SHIFT_HIGH - KMALLOC_SHIFT_LOW + 1)
 
 struct kmem_cache {
 	size_t size;
@@ -27,7 +27,7 @@ struct kmem_cache {
 	struct list_head partial;
 };
 
-void slab_init(void);
+void kmem_cache_init(void);
 void *kmalloc(size_t size);
 void *kzalloc(size_t size);
 void kfree(void *object);

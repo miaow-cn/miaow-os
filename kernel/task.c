@@ -10,7 +10,7 @@
 extern const unsigned char app0_start[], app0_end[], app1_start[], app1_end[], app2_start[],
 	app2_end[];
 
-static struct task tasks[APP_COUNT];
+static struct task_struct tasks[APP_COUNT];
 static unsigned current;
 
 static void task_prefix(void)
@@ -21,16 +21,16 @@ static void task_prefix(void)
 	uart_puts(prefix);
 }
 
-static struct context *schedule(void)
+static struct pt_regs *schedule(void)
 {
 	int next = next_runnable(tasks, current);
 	if (next >= 0) {
 		current = (unsigned)next;
 		timer_rearm();
-		return &tasks[next].context;
+		return &tasks[next].regs;
 	}
 	timer_stop();
-	if (READ_SYSREG(cntp_ctl_el0) & 1) {
+	if (read_sysreg(cntp_ctl_el0) & 1) {
 		kernel_panic();
 	}
 	printk("ALL APPS DONE\n");
@@ -44,17 +44,17 @@ static bool contains(uintptr_t start, size_t size, uintptr_t pointer, size_t len
 	return pointer >= start && pointer - start <= size && length <= size - (pointer - start);
 }
 
-static long sys_log(struct task *task, uintptr_t pointer, size_t length)
+static long sys_log(struct task_struct *task, uintptr_t pointer, size_t length)
 {
 	if (length > LOG_LIMIT) {
-		return -ERR_INVALID;
+		return -EINVAL;
 	}
 	if (!length) {
 		return 0;
 	}
 	if (!contains(task->image, task->size, pointer, length) &&
 	    !contains(task->stack_bottom, APP_STACK_SIZE, pointer, length)) {
-		return -ERR_FAULT;
+		return -EFAULT;
 	}
 	task_prefix();
 	for (size_t index = 0; index < length; ++index) {
@@ -63,46 +63,45 @@ static long sys_log(struct task *task, uintptr_t pointer, size_t length)
 	return (long)length;
 }
 
-struct context *trap(struct context *frame, uint64_t irq)
+struct pt_regs *trap(struct pt_regs *regs, uint64_t irq)
 {
-	struct task *task = &tasks[current];
-	if ((frame->pstate & 0x1f) || !(READ_SYSREG(daif) & 0x80) ||
-	    frame->sp < task->stack_bottom || frame->sp > task->stack_top || (frame->sp & 15)) {
+	struct task_struct *task = &tasks[current];
+	if ((regs->pstate & 0x1f) || !(read_sysreg(daif) & 0x80) ||
+	    regs->sp < task->stack_bottom || regs->sp > task->stack_top || (regs->sp & 15)) {
 		kernel_panic();
 	}
-	task->context = *frame;
+	task->regs = *regs;
 	if (!task->observed) {
 		printk("[app %u] TRAP origin=%016lx handler=%016lx\n", current,
-		       frame->pstate & 0x1f, READ_SYSREG(CurrentEL) >> 2);
+		       regs->pstate & 0x1f, read_sysreg(CurrentEL) >> 2);
 		task->observed = true;
 	}
 	if (irq) {
 		if (!timer_interrupt()) {
-			return &task->context;
+			return &task->regs;
 		}
 		return schedule();
 	}
-	uint64_t syndrome = READ_SYSREG(esr_el1);
+	uint64_t syndrome = read_sysreg(esr_el1);
 	if ((syndrome >> 26) != 0x15 || (syndrome & 0xffff)) {
-		printk("[app %u] FAULT ESR=%016lx ELR=%016lx\n", current, syndrome, frame->pc);
+		printk("[app %u] FAULT ESR=%016lx ELR=%016lx\n", current, syndrome, regs->pc);
 		task->runnable = false;
 		return schedule();
 	}
-	switch (frame->registers[8]) {
-	case SYS_LOG:
-		task->context.registers[0] =
-			sys_log(task, frame->registers[0], frame->registers[1]);
+	switch (regs->regs[8]) {
+	case __NR_log:
+		task->regs.regs[0] = sys_log(task, regs->regs[0], regs->regs[1]);
 		break;
-	case SYS_EXIT:
-		task->exit_status = (long)frame->registers[0];
-		printk("[app %u] EXIT status=%ld\n", current, frame->registers[0]);
+	case __NR_exit:
+		task->exit_code = (long)regs->regs[0];
+		printk("[app %u] EXIT status=%ld\n", current, regs->regs[0]);
 		task->runnable = false;
 		return schedule();
 	default:
-		task->context.registers[0] = (uint64_t)-ERR_NOSYS;
+		task->regs.regs[0] = (uint64_t)-ENOSYS;
 		break;
 	}
-	return &task->context;
+	return &task->regs;
 }
 
 [[noreturn]] void start_apps(void)
@@ -110,7 +109,7 @@ struct context *trap(struct context *frame, uint64_t irq)
 	const unsigned char *starts[] = {app0_start, app1_start, app2_start};
 	const unsigned char *ends[] = {app0_end, app1_end, app2_end};
 	for (unsigned index = 0; index < APP_COUNT; ++index) {
-		struct task *task = &tasks[index];
+		struct task_struct *task = &tasks[index];
 		task->image = APP_FIRST + index * APP_SLOT_SIZE;
 		task->size = (uintptr_t)ends[index] - (uintptr_t)starts[index];
 		task->stack_top = task->image + APP_SLOT_SIZE;
@@ -119,7 +118,8 @@ struct context *trap(struct context *frame, uint64_t irq)
 		    task->image + task->size > task->stack_bottom) {
 			kernel_panic();
 		}
-		volatile unsigned char *destination = (volatile unsigned char *)task->image;
+		/* The compatibility mapping makes the slot's user address its physical address. */
+		volatile unsigned char *destination = __va(task->image);
 		for (size_t offset = 0; offset < task->size; ++offset) {
 			destination[offset] = starts[index][offset];
 		}
@@ -128,15 +128,15 @@ struct context *trap(struct context *frame, uint64_t irq)
 				kernel_panic();
 			}
 		}
-		memset((void *)task->stack_bottom, 0, APP_STACK_SIZE);
-		task->context.pc = task->image;
-		task->context.sp = task->stack_top;
-		task->context.pstate = 0x340;
+		memset(__va(task->stack_bottom), 0, APP_STACK_SIZE);
+		task->regs.pc = task->image;
+		task->regs.sp = task->stack_top;
+		task->regs.pstate = 0x340;
 		task->runnable = true;
 		printk("LOADED app=%u image=%016lx stack=%016lx copy=OK\n", index, task->image,
 		       task->stack_top);
 	}
 	__asm__ volatile("dsb sy\n\tisb" : : : "memory");
 	timer_init();
-	enter_app(&tasks[0].context);
+	enter_app(&tasks[0].regs);
 }

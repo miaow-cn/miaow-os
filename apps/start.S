@@ -10,7 +10,7 @@
 .global _start
 _start:
 	bl app_main
-	mov x8, #SYS_EXIT
+	mov x8, #__NR_exit
 	svc #0
 	udf #0
 .section .note.GNU-stack, "", %progbits

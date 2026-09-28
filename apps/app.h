@@ -30,7 +30,7 @@ static inline long log_text(const char *text)
 	while (text[length]) {
 		++length;
 	}
-	return syscall(SYS_LOG, (uintptr_t)text, length);
+	return syscall(__NR_log, (uintptr_t)text, length);
 }
 
 static inline void log_value(const char *label, uint64_t value)
@@ -50,7 +50,7 @@ static inline void log_value(const char *label, uint64_t value)
 		buffer[length++] = digits[--count];
 	}
 	buffer[length++] = '\n';
-	syscall(SYS_LOG, (uintptr_t)buffer, length);
+	syscall(__NR_log, (uintptr_t)buffer, length);
 }
 
 #endif /* _APP_H */

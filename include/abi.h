@@ -7,16 +7,12 @@
 #ifndef _ABI_H
 #define _ABI_H
 
-#define SYS_LOG        0
-#define SYS_EXIT       1
-#define ERR_FAULT      14
-#define ERR_INVALID    22
-#define ERR_NOSYS      38
+#define __NR_log       0
+#define __NR_exit      1
+#define EFAULT         14
+#define EINVAL         22
+#define ENOSYS         38
 #define LOG_LIMIT      256
-#define RAM_BASE       0x40000000
-#define RAM_SIZE       0x08000000
-#define PAGE_SHIFT     12
-#define PAGE_SIZE      (1 << PAGE_SHIFT)
 #define APP_FIRST      0x41000000
 #define APP_SLOT_SIZE  0x20000
 #define APP_IMAGE_SIZE 0x10000

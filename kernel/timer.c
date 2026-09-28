@@ -6,23 +6,23 @@
 
 #include "kernel.h"
 
-#define GICD      ((volatile uint32_t *)0x08000000)
-#define GICR      ((volatile uint32_t *)0x080a0000)
-#define GICR_SGI  ((volatile uint32_t *)0x080b0000)
+#define GICD      ((volatile uint32_t *)IO_ADDRESS(0x08000000))
+#define GICR      ((volatile uint32_t *)IO_ADDRESS(0x080a0000))
+#define GICR_SGI  ((volatile uint32_t *)IO_ADDRESS(0x080b0000))
 #define TIMER_IRQ 30
 
 static uint64_t quantum;
 
 void timer_rearm(void)
 {
-	WRITE_SYSREG(cntp_tval_el0, quantum);
-	WRITE_SYSREG(cntp_ctl_el0, 1);
+	write_sysreg(quantum, cntp_tval_el0);
+	write_sysreg(1, cntp_ctl_el0);
 	__asm__ volatile("isb" : : : "memory");
 }
 
 void timer_stop(void)
 {
-	WRITE_SYSREG(cntp_ctl_el0, 0);
+	write_sysreg(0, cntp_ctl_el0);
 	__asm__ volatile("isb" : : : "memory");
 }
 
@@ -44,24 +44,24 @@ void timer_init(void)
 	while (GICD[0] & (1u << 31)) {
 	}
 	__asm__ volatile("dsb sy" : : : "memory");
-	WRITE_SYSREG(icc_sre_el1, READ_SYSREG(icc_sre_el1) | 1);
+	write_sysreg(read_sysreg(icc_sre_el1) | 1, icc_sre_el1);
 	__asm__ volatile("isb" : : : "memory");
-	WRITE_SYSREG(icc_pmr_el1, 0xff);
-	WRITE_SYSREG(icc_bpr1_el1, 0);
-	WRITE_SYSREG(icc_ctlr_el1, 0);
-	WRITE_SYSREG(icc_igrpen1_el1, 1);
+	write_sysreg(0xff, icc_pmr_el1);
+	write_sysreg(0, icc_bpr1_el1);
+	write_sysreg(0, icc_ctlr_el1);
+	write_sysreg(1, icc_igrpen1_el1);
 	__asm__ volatile("isb" : : : "memory");
-	quantum = READ_SYSREG(cntfrq_el0) / 100;
+	quantum = read_sysreg(cntfrq_el0) / 100;
 	if (!quantum || quantum > 0x7fffffff) {
 		kernel_panic();
 	}
-	printk("TIMER frequency=%016lx quantum=%016lx\n", READ_SYSREG(cntfrq_el0), quantum);
+	printk("TIMER frequency=%016lx quantum=%016lx\n", read_sysreg(cntfrq_el0), quantum);
 	timer_rearm();
 }
 
 bool timer_interrupt(void)
 {
-	uint64_t interrupt = READ_SYSREG(icc_iar1_el1);
+	uint64_t interrupt = read_sysreg(icc_iar1_el1);
 	if (interrupt >= 1020 && interrupt <= 1023) {
 		return false;
 	}
@@ -70,7 +70,7 @@ bool timer_interrupt(void)
 	}
 	timer_rearm();
 	__asm__ volatile("dsb sy" : : : "memory");
-	WRITE_SYSREG(icc_eoir1_el1, interrupt);
+	write_sysreg(interrupt, icc_eoir1_el1);
 	__asm__ volatile("isb" : : : "memory");
 	return true;
 }

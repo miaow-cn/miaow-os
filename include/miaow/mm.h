@@ -20,8 +20,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "abi.h"
 #include <miaow/list.h>
+#include <miaow/memory.h>
 
 #define MAX_ORDER 11
 
@@ -31,25 +31,25 @@
 struct kmem_cache;
 
 struct page {
-	struct list_head list;
+	struct list_head lru;
 	unsigned flags;
 	unsigned order;
 	/* Used only while the page backs a slab. */
 	void *freelist;
-	struct kmem_cache *cache;
+	struct kmem_cache *slab;
 	unsigned inuse;
 };
 
 struct free_area {
-	struct list_head list;
-	unsigned long count;
+	struct list_head free_list;
+	unsigned long nr_free;
 };
 
-void page_alloc_init(uintptr_t base, unsigned long pages, struct page *map);
-void page_alloc_free_range(uintptr_t start, uintptr_t end);
-unsigned long page_alloc_free_count(void);
+void free_area_init(uintptr_t base, unsigned long pages, struct page *map);
+void __free_memory_core(uintptr_t start, uintptr_t end);
+unsigned long nr_free_pages(void);
 struct page *alloc_pages(unsigned order);
-void free_pages(struct page *page, unsigned order);
+void __free_pages(struct page *page, unsigned order);
 uintptr_t page_to_phys(const struct page *page);
 struct page *phys_to_page(uintptr_t address);
 

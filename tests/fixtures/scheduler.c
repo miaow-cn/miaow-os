@@ -10,7 +10,7 @@
 int main(void)
 {
 	for (unsigned mask = 0; mask < 8; ++mask) {
-		struct task tasks[APP_COUNT] = {};
+		struct task_struct tasks[APP_COUNT] = {};
 		unsigned ordered[APP_COUNT];
 		unsigned count = 0;
 		for (unsigned index = 0; index < APP_COUNT; ++index) {

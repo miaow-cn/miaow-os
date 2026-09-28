@@ -4,6 +4,9 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+#include "abi.h"
+#include <miaow/memory.h>
+
 ENTRY(_start)
 PHDRS
 {
@@ -12,9 +15,10 @@ PHDRS
 }
 SECTIONS
 {
-	. = 0x40080000;
+	/* Linked in the linear map, loaded at the physical address QEMU uses for raw images. */
+	. = PAGE_OFFSET + TEXT_OFFSET;
 	_text = .;
-	.text : { KEEP(*(.text.boot)) *(.text .text.*) } :code
+	.text : AT(PHYS_OFFSET + TEXT_OFFSET) { KEEP(*(.text.boot)) *(.text .text.*) } :code
 	.rodata : { *(.rodata .rodata.*) } :code
 	. = ALIGN(4096);
 	.data : { *(.data .data.*) } :data
@@ -23,7 +27,7 @@ SECTIONS
 		__bss_start = .;
 		*(.bss .bss.* COMMON)
 		. = ALIGN(16);
-		__bss_end = .;
+		__bss_stop = .;
 	} :data
 	.stack (NOLOAD) : {
 		. = ALIGN(16);
@@ -31,6 +35,6 @@ SECTIONS
 		__stack_top = .;
 	} :data
 	_end = .;
-	ASSERT(. < 0x41000000, "Kernel overlaps application slots")
+	ASSERT(. - PAGE_OFFSET + PHYS_OFFSET <= APP_FIRST, "Kernel overlaps application slots")
 	/DISCARD/ : { *(.comment .note* .eh_frame*) }
 }

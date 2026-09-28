@@ -8,6 +8,19 @@ foreach(INDEX RANGE 0 2)
 endforeach()
 set_source_files_properties(payloads.S PROPERTIES OBJECT_DEPENDS "${APP_BINARIES}")
 
+set(KERNEL_LINKER "${CMAKE_CURRENT_BINARY_DIR}/linker.ld")
+add_custom_command(
+    OUTPUT "${KERNEL_LINKER}"
+    COMMAND "${CMAKE_C_COMPILER}" -E -P -x c
+            "-I${PROJECT_SOURCE_DIR}/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/linker.ld.S" -o "${KERNEL_LINKER}"
+    DEPENDS linker.ld.S "${PROJECT_SOURCE_DIR}/include/abi.h"
+            "${PROJECT_SOURCE_DIR}/include/miaow/memory.h"
+    VERBATIM
+)
+add_custom_target(kernel_linker DEPENDS "${KERNEL_LINKER}")
+set(KERNEL_LINKER "${KERNEL_LINKER}" PARENT_SCOPE)
+
 add_library(kernel_core OBJECT boot.S vectors.S main.c uart.c task.c timer.c payloads.S)
 target_link_libraries(kernel_core PRIVATE build_options)
 add_dependencies(kernel_core app_images)
@@ -15,14 +28,14 @@ add_executable(kernel $<TARGET_OBJECTS:kernel_core>)
 set_target_properties(kernel PROPERTIES
     SUFFIX ".elf"
     RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
-    LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/linker.ld"
+    LINK_DEPENDS "${KERNEL_LINKER}"
 )
 target_link_libraries(kernel PRIVATE build_options kernel_lib kernel_mm)
 target_link_options(kernel PRIVATE
-    "LINKER:-T,${CMAKE_CURRENT_SOURCE_DIR}/linker.ld"
+    "LINKER:-T,${KERNEL_LINKER}"
     "LINKER:-Map,${PROJECT_BINARY_DIR}/kernel.map"
 )
-add_dependencies(kernel app_images)
+add_dependencies(kernel app_images kernel_linker)
 add_custom_command(
     OUTPUT "${PROJECT_BINARY_DIR}/kernel.bin"
     COMMAND "${CMAKE_OBJCOPY}" -O binary "$<TARGET_FILE:kernel>"

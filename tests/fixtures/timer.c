@@ -8,7 +8,7 @@
 	timer_init();
 	timer_stop();
 	__asm__ volatile("isb" : : : "memory");
-	if (timer_interrupt() || timer_interrupt() || (READ_SYSREG(cntp_ctl_el0) & 1)) {
+	if (timer_interrupt() || timer_interrupt() || (read_sysreg(cntp_ctl_el0) & 1)) {
 		kernel_panic();
 	}
 	printk("SPURIOUS OK\n");

@@ -1,6 +1,12 @@
 /* SPDX-FileCopyrightText: 2026 miaow <guoyr_2013@hotmail.com> */
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 
+/* Until the MMU is on, code runs at physical addresses: take addresses PC-relatively. */
+.macro adr_l, register, symbol
+	adrp \register, \symbol
+	add \register, \register, :lo12:\symbol
+.endm
+
 .section .text.boot, "ax"
 .global _start
 _start:
@@ -10,33 +16,41 @@ _start:
 	cmp x0, #4
 	b.ne unsupported_el
 	msr spsel, #1
-	ldr x0, =__stack_top
+	adr_l x0, __stack_top
 	mov sp, x0
 	mrs x0, sctlr_el1
 	ldr x1, =0x1005
 	bic x0, x0, x1
 	msr sctlr_el1, x0
 	isb
-	ldr x0, =__bss_start
-	ldr x1, =__bss_end
+	adr_l x0, __bss_start
+	adr_l x1, __bss_stop
 clear_bss:
 	cmp x0, x1
 	b.hs bss_ready
 	str xzr, [x0], #8
 	b clear_bss
 bss_ready:
-	ldr x0, =dtb_pointer
+	adr_l x0, __fdt_pointer
 	str x19, [x0]
+	bl mmu_init
+	/* Literal pool entries hold link-time, high virtual addresses. */
+	ldr x0, =__mmap_switched
+	br x0
+.global __mmap_switched
+__mmap_switched:
+	ldr x0, =__stack_top
+	mov sp, x0
 	ldr x0, =vectors
 	msr vbar_el1, x0
 	isb
-	bl mmu_init
+	bl cpu_uninstall_idmap
 	bl kernel_main
 halt:
 	wfi
 	b halt
 unsupported_el:
-	ldr x0, =unsupported_message
+	adr_l x0, unsupported_message
 	ldr x1, =0x09000000
 unsupported_next:
 	ldrb w2, [x0], #1

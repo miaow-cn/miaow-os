@@ -25,11 +25,12 @@ int main(void)
 	unsigned long available;
 
 	assert(memory && map);
-	base = (uintptr_t)memory;
-	page_alloc_init(base, PAGES, map);
-	page_alloc_free_range(base, base + PAGES * PAGE_SIZE);
-	slab_init();
-	available = page_alloc_free_count();
+	/* The host heap plays the linear map; the allocators see its physical alias. */
+	base = __pa(memory);
+	free_area_init(base, PAGES, map);
+	__free_memory_core(base, base + PAGES * PAGE_SIZE);
+	kmem_cache_init();
+	available = nr_free_pages();
 
 	assert(!kmalloc(0));
 	kfree(nullptr);
@@ -53,7 +54,7 @@ int main(void)
 	for (unsigned index = 0; index < COUNT; ++index) {
 		kfree(objects[index]);
 	}
-	assert(page_alloc_free_count() == available);
+	assert(nr_free_pages() == available);
 
 	/* Released memory is handed out again. */
 	void *first = kmalloc(64);
@@ -74,11 +75,11 @@ int main(void)
 			assert(batch[index] != batch[other]);
 		}
 	}
-	assert(page_alloc_free_count() == available - 1);
+	assert(nr_free_pages() == available - 1);
 	for (unsigned index = 0; index < objects_per_page; ++index) {
 		kfree(batch[index]);
 	}
-	assert(page_alloc_free_count() == available);
+	assert(nr_free_pages() == available);
 	free(batch);
 
 	void *zeroed = kzalloc(200);
@@ -88,7 +89,7 @@ int main(void)
 		assert(((const unsigned char *)zeroed)[offset] == 0);
 	}
 	kfree(zeroed);
-	assert(page_alloc_free_count() == available);
+	assert(nr_free_pages() == available);
 
 	free(map);
 	free(memory);

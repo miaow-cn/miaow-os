@@ -14,9 +14,9 @@ vectors:
 	b unexpected_exception
 	.balign 128
 .endr
-	b lower_sync
+	b el0_sync
 	.balign 128
-	b lower_irq
+	b el0_irq
 	.balign 128
 .rept 6
 	b unexpected_exception
@@ -25,8 +25,8 @@ vectors:
 unexpected_exception:
 	bl kernel_panic
 
-.macro save_context
-	sub sp, sp, #FRAME_SIZE
+.macro kernel_entry
+	sub sp, sp, #S_FRAME_SIZE
 	stp x0, x1, [sp, #0]
 	stp x2, x3, [sp, #16]
 	stp x4, x5, [sp, #32]
@@ -44,32 +44,32 @@ unexpected_exception:
 	stp x28, x29, [sp, #224]
 	str x30, [sp, #240]
 	mrs x9, sp_el0
-	str x9, [sp, #FRAME_SP]
+	str x9, [sp, #S_SP]
 	mrs x9, elr_el1
-	str x9, [sp, #FRAME_PC]
+	str x9, [sp, #S_PC]
 	mrs x9, spsr_el1
-	str x9, [sp, #FRAME_PSTATE]
+	str x9, [sp, #S_PSTATE]
 .endm
 
-lower_sync:
-	save_context
+el0_sync:
+	kernel_entry
 	mov x1, #0
 	b dispatch
-lower_irq:
-	save_context
+el0_irq:
+	kernel_entry
 	mov x1, #1
 dispatch:
 	mov x0, sp
 	bl trap
-	add sp, sp, #FRAME_SIZE
+	add sp, sp, #S_FRAME_SIZE
 .global enter_app
 enter_app:
 	mov x30, x0
-	ldr x9, [x30, #FRAME_SP]
+	ldr x9, [x30, #S_SP]
 	msr sp_el0, x9
-	ldr x9, [x30, #FRAME_PC]
+	ldr x9, [x30, #S_PC]
 	msr elr_el1, x9
-	ldr x9, [x30, #FRAME_PSTATE]
+	ldr x9, [x30, #S_PSTATE]
 	msr spsr_el1, x9
 	ldp x0, x1, [x30, #0]
 	ldp x2, x3, [x30, #16]

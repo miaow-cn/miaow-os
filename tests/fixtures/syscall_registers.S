@@ -21,7 +21,7 @@ app_main:
 	b.cc failure
 	b.mi failure
 	b.vs failure
-	cmn x0, #ERR_NOSYS
+	cmn x0, #ENOSYS
 	b.ne failure
 .irp register,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30
 	cmp x\register, #(100 + \register)
@@ -36,7 +36,7 @@ app_main:
 failure:
 	mov x0, #1
 exit:
-	mov x8, #SYS_EXIT
+	mov x8, #__NR_exit
 	svc #0
 	udf #0
 .section .note.GNU-stack, "", %progbits

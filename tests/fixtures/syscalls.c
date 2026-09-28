@@ -5,6 +5,7 @@
  */
 
 #include "app.h"
+#include <miaow/memory.h>
 
 int app_main(void)
 {
@@ -12,20 +13,22 @@ int app_main(void)
 	for (unsigned index = 0; index < sizeof(buffer); ++index) {
 		buffer[index] = 'Z';
 	}
-	if (syscall(SYS_LOG, 0, 0) != 0 || syscall(SYS_LOG, UINTPTR_MAX, 0) != 0 ||
-	    syscall(SYS_LOG, (uintptr_t)buffer, 257) != -ERR_INVALID ||
-	    syscall(SYS_LOG, 0, 1) != -ERR_FAULT ||
-	    syscall(SYS_LOG, UINTPTR_MAX - 1, 4) != -ERR_FAULT ||
-	    syscall(SYS_LOG, APP_FIRST + APP_SLOT_SIZE - 1, 2) != -ERR_FAULT ||
-	    syscall(SYS_LOG, APP_FIRST + APP_IMAGE_SIZE - 1, 2) != -ERR_FAULT ||
-	    syscall(SYS_LOG, APP_FIRST + APP_SLOT_SIZE, 1) != -ERR_FAULT ||
-	    syscall(SYS_LOG, APP_FIRST + APP_SLOT_SIZE * 2 - 16, 1) != -ERR_FAULT ||
-	    syscall(SYS_LOG, 0x40080000, 1) != -ERR_FAULT ||
-	    syscall(SYS_LOG, 0x09000000, 1) != -ERR_FAULT ||
-	    syscall(99, 0, 0) != -ERR_NOSYS) {
+	if (syscall(__NR_log, 0, 0) != 0 || syscall(__NR_log, UINTPTR_MAX, 0) != 0 ||
+	    syscall(__NR_log, (uintptr_t)buffer, 257) != -EINVAL ||
+	    syscall(__NR_log, 0, 1) != -EFAULT ||
+	    syscall(__NR_log, UINTPTR_MAX - 1, 4) != -EFAULT ||
+	    syscall(__NR_log, APP_FIRST + APP_SLOT_SIZE - 1, 2) != -EFAULT ||
+	    syscall(__NR_log, APP_FIRST + APP_IMAGE_SIZE - 1, 2) != -EFAULT ||
+	    syscall(__NR_log, APP_FIRST + APP_SLOT_SIZE, 1) != -EFAULT ||
+	    syscall(__NR_log, APP_FIRST + APP_SLOT_SIZE * 2 - 16, 1) != -EFAULT ||
+	    syscall(__NR_log, 0x40080000, 1) != -EFAULT ||
+	    syscall(__NR_log, 0x09000000, 1) != -EFAULT ||
+	    syscall(__NR_log, PAGE_OFFSET + TEXT_OFFSET, 1) != -EFAULT ||
+	    syscall(__NR_log, IO_ADDRESS(0x09000000), 1) != -EFAULT ||
+	    syscall(99, 0, 0) != -ENOSYS) {
 		return 1;
 	}
-	if (syscall(SYS_LOG, (uintptr_t)buffer, sizeof(buffer)) != sizeof(buffer) ||
+	if (syscall(__NR_log, (uintptr_t)buffer, sizeof(buffer)) != sizeof(buffer) ||
 	    log_text("\n") != 1 || log_text("syscalls OK\n") != 12) {
 		return 2;
 	}

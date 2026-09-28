@@ -16,8 +16,8 @@ int printk(const char *fmt, ...)
 	char buffer[256];
 	va_list args;
 	int length;
-	uint64_t ticks = READ_SYSREG(cntpct_el0);
-	uint64_t frequency = READ_SYSREG(cntfrq_el0);
+	uint64_t ticks = read_sysreg(cntpct_el0);
+	uint64_t frequency = read_sysreg(cntfrq_el0);
 	unsigned long seconds = (unsigned long)(ticks / frequency);
 	unsigned long micros = (unsigned long)(ticks % frequency * 1000000 / frequency);
 

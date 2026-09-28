@@ -15,6 +15,9 @@ from tests.support import verifies
 
 
 ROOT = Path(__file__).resolve().parents[1]
+PAGE_OFFSET = 0xffffffc000000000
+KERNEL_START = PAGE_OFFSET + 0x80000
+KERNEL_LIMIT = PAGE_OFFSET + 0x01000000
 QEMU = [
     "qemu-system-aarch64", "-machine",
     "virt-10.1,gic-version=3,virtualization=off,secure=off,its=off",
@@ -116,25 +119,25 @@ def debug(image, scenario):
 
 
 class KernelTests(unittest.TestCase):
-    @verifies("REQ-BOOT-001", "REQ-PRINT-001", "REQ-MM-004", "REQ-LIB-001")
+    @verifies("REQ-BOOT-001", "REQ-PRINT-001", "REQ-MM-004", "REQ-MM-005", "REQ-LIB-001")
     def test_boot_el1_mmu_off(self):
         with tempfile.TemporaryDirectory() as directory:
             build(directory)
             output, observations = debug(Path(directory) / "kernel.bin", "boot")
         self.assertIn("GDB BOOT OK", observations)
-        match = re.search(r"BOOT EL=([0-9a-f]+) SCTLR=([0-9a-f]+) VBAR=([0-9a-f]+) BSS=([0-9a-f]+) SP=([0-9a-f]+)", output)
+        match = re.search(r"BOOT EL=([0-9a-f]+) SCTLR=([0-9a-f]+) VBAR=([0-9a-f]+) BSS=([0-9a-f]+) SP=([0-9a-f]+) DTB=([0-9a-f]+)\n", output)
         self.assertIsNotNone(match, output)
-        level, control, vectors, bss, stack = (int(value, 16) for value in match.groups())
+        level, control, vectors, bss, stack, _ = (int(value, 16) for value in match.groups())
         self.assertEqual(level, 1)
         self.assertEqual(control & 0x1005, 1)
         self.assertEqual(vectors % 2048, 0)
-        self.assertGreaterEqual(vectors, 0x40080000)
+        self.assertGreaterEqual(vectors, KERNEL_START)
         self.assertEqual(bss, 0)
         self.assertEqual(stack % 16, 0)
         self.assertGreater(stack, vectors)
-        self.assertLess(stack, 0x41000000)
+        self.assertLess(stack, KERNEL_LIMIT)
 
-    @verifies("REQ-MM-004", "REQ-MM-001")
+    @verifies("REQ-MM-004", "REQ-MM-005", "REQ-MM-001")
     def test_identity_mappings(self):
         with tempfile.TemporaryDirectory() as directory:
             build(directory, target="memory_test_image")
@@ -142,20 +145,21 @@ class KernelTests(unittest.TestCase):
         self.assertNotIn("PANIC", output)
         self.assertNotIn("FAULT", output)
         self.assertNotIn("FAIL", output)
-        self.assertIn("MMU SELFTEST OK ram=32768 device=49\n", output)
+        self.assertIn("MMU SELFTEST OK ram=32768 device=49 user=96\n", output)
         self.assertIn("MM SELFTEST OK\n", output)
         match = re.search(
             r"MMU TCR=([0-9a-f]+) MAIR=([0-9a-f]+) TTBR0=([0-9a-f]+) "
             r"TTBR1=([0-9a-f]+) tables=([0-9a-f]+)-([0-9a-f]+)", output,
         )
         self.assertIsNotNone(match, output)
-        tcr, mair, root, upper, start, end = (int(value, 16) for value in match.groups())
-        self.assertEqual(tcr, 25 | (3 << 12) | (25 << 16) | (1 << 23) | (2 << 30))
+        tcr, mair, user, kernel, start, end = (int(value, 16) for value in match.groups())
+        self.assertEqual(tcr, 25 | (3 << 12) | (25 << 16) | (3 << 28) | (2 << 30))
         self.assertEqual(mair, 0x4400)
-        self.assertEqual(root, start)
-        self.assertEqual(upper, 0)
+        for root in (user, kernel):
+            self.assertTrue(start <= root < end, hex(root))
+        self.assertNotEqual(user, kernel)
         self.assertEqual(start % 4096, 0)
-        self.assertEqual(end - start, 69 * 4096)
+        self.assertEqual(end - start, 72 * 4096)
         self.assertGreaterEqual(start, 0x40080000)
         self.assertLessEqual(end, 0x41000000)
         reserved = [(int(low, 16), int(high, 16))
@@ -167,7 +171,7 @@ class KernelTests(unittest.TestCase):
         for index in range(3):
             self.assertIn(f"[app {index}] EXIT status=0\n", output)
 
-    @verifies("REQ-APP-001", "REQ-SYS-001", "REQ-BUILD-001", "REQ-PRINT-001", "REQ-MM-004")
+    @verifies("REQ-APP-001", "REQ-SYS-001", "REQ-BUILD-001", "REQ-PRINT-001", "REQ-MM-004", "REQ-MM-005")
     def test_independent_demos(self):
         with tempfile.TemporaryDirectory() as directory:
             build(directory)
@@ -408,7 +412,7 @@ class KernelTests(unittest.TestCase):
         host("kmalloc", "lib/string.c", "mm/page_alloc.c", "mm/slab.c",
              "tests/fixtures/kmalloc.c")
 
-    @verifies("REQ-MM-001", "REQ-MM-002", "REQ-MM-003", "REQ-PRINT-001", "REQ-MM-004")
+    @verifies("REQ-MM-001", "REQ-MM-002", "REQ-MM-003", "REQ-PRINT-001", "REQ-MM-004", "REQ-MM-005")
     def test_memory_map_and_allocators(self):
         with tempfile.TemporaryDirectory() as directory:
             build(directory, target="memory_test_image")

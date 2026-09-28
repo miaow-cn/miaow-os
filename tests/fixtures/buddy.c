@@ -23,10 +23,10 @@ int main(void)
 
 	assert(memory && map);
 	base = (uintptr_t)memory;
-	page_alloc_init(base, PAGES, map);
-	assert(page_alloc_free_count() == 0);
-	page_alloc_free_range(base, base + PAGES * PAGE_SIZE);
-	assert(page_alloc_free_count() == PAGES);
+	free_area_init(base, PAGES, map);
+	assert(nr_free_pages() == 0);
+	__free_memory_core(base, base + PAGES * PAGE_SIZE);
+	assert(nr_free_pages() == PAGES);
 
 	/* A block is aligned to its own size and lies inside the managed range. */
 	for (unsigned order = 0; order < MAX_ORDER; ++order) {
@@ -40,9 +40,9 @@ int main(void)
 		assert(!(address & ((uintptr_t)(PAGE_SIZE << order) - 1)));
 		assert(address >= base && address + (PAGE_SIZE << order) <= base + PAGES * PAGE_SIZE);
 		assert(phys_to_page(address) == block);
-		assert(page_alloc_free_count() == PAGES - (1UL << order));
-		free_pages(block, order);
-		assert(page_alloc_free_count() == PAGES);
+		assert(nr_free_pages() == PAGES - (1UL << order));
+		__free_pages(block, order);
+		assert(nr_free_pages() == PAGES);
 		largest = order;
 	}
 	assert(largest > 0);
@@ -62,27 +62,27 @@ int main(void)
 		}
 	}
 	for (unsigned index = 0; index < 6; ++index) {
-		free_pages(held[index], orders[index]);
+		__free_pages(held[index], orders[index]);
 	}
-	assert(page_alloc_free_count() == PAGES);
+	assert(nr_free_pages() == PAGES);
 
 	/* Fragment the arena completely, then release it and check it coalesced. */
 	while (count < PAGES && (held[count] = alloc_pages(0)) != nullptr) {
 		count++;
 	}
 	assert(count == PAGES);
-	assert(page_alloc_free_count() == 0);
+	assert(nr_free_pages() == 0);
 	assert(!alloc_pages(0));
 	for (unsigned index = 0; index < count; ++index) {
-		free_pages(held[index], 0);
+		__free_pages(held[index], 0);
 	}
-	assert(page_alloc_free_count() == PAGES);
+	assert(nr_free_pages() == PAGES);
 
 	struct page *restored = alloc_pages(largest);
 
 	assert(restored);
-	free_pages(restored, largest);
-	assert(page_alloc_free_count() == PAGES);
+	__free_pages(restored, largest);
+	assert(nr_free_pages() == PAGES);
 
 	free(map);
 	free(memory);

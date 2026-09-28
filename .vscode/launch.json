@@ -17,8 +17,8 @@
                         "postDebugTask": "kill-qemu",
                         "postRemoteConnectCommands": [
                                 {
-                                        "description": "Stop at the kernel entry point",
-                                        "text": "-break-insert -t _start",
+                                        "description": "Stop at the physical kernel entry point",
+                                        "text": "-break-insert -t *0x40080000",
                                         "ignoreFailures": false
                                 }
                         ],

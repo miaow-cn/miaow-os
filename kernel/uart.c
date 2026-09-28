@@ -8,7 +8,7 @@
 
 void uart_putc(char character)
 {
-	volatile uint32_t *uart = (volatile uint32_t *)0x09000000;
+	volatile uint32_t *uart = (volatile uint32_t *)IO_ADDRESS(0x09000000);
 	while (uart[0x18 / 4] & (1u << 5)) {
 	}
 	uart[0] = (unsigned char)character;

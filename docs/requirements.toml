@@ -174,12 +174,24 @@ acceptance = [
 
 [[requirements]]
 id = "REQ-MM-004"
-title = "Enable boot-time identity mappings"
-statement = "The kernel shall enable the EL1 MMU with static three-level, 4 KiB identity mappings in a 39-bit TTBR0 address space while keeping instruction and data caches disabled."
+title = "Enable the MMU through a boot-time identity mapping"
+statement = "The kernel shall enable the EL1 MMU with static three-level, 4 KiB page tables in 39-bit TTBR0 and TTBR1 address spaces, crossing the switch through a temporary identity mapping while keeping instruction and data caches disabled."
 status = "implemented"
 acceptance = [
-    "Map every page of the 128 MiB RAM at its physical address as Normal non-cacheable memory with inner-shareable page descriptors, including the kernel, stack, allocator memory, device tree, and application slots.",
-    "Map the PL011 page at 0x09000000, the 64 KiB GIC distributor at 0x08000000, and the 128 KiB CPU 0 redistributor at 0x080a0000 as privileged, non-executable Device-nGnRnE memory; leave other low-address ranges unmapped.",
-    "Allow EL0 reads, writes, and execution in all three application slots through one shared compatibility mapping; no application-to-application isolation or RAM W^X is promised in this stage.",
-    "Use page-aligned static tables reserved as part of the kernel image, publish them with barriers, invalidate stale TLB entries, and disable TTBR1 walks before enabling translation.",
+    "Map every page of the 128 MiB RAM as Normal non-cacheable memory with inner-shareable page descriptors, including the kernel, stack, allocator memory, device tree, and application slots.",
+    "Map the PL011 page at physical 0x09000000, the 64 KiB GIC distributor at 0x08000000, and the 128 KiB CPU 0 redistributor at 0x080a0000 as privileged, non-executable Device-nGnRnE memory; leave other device ranges unmapped.",
+    "While translation is being enabled, TTBR0 identity maps the physical addresses of the whole kernel image for EL1, so the code and stack in use stay reachable until execution continues at high addresses.",
+    "Use page-aligned static tables reserved as part of the kernel image, publish them with barriers, and invalidate stale TLB entries before enabling translation.",
+]
+
+[[requirements]]
+id = "REQ-MM-005"
+title = "Run the kernel at high virtual addresses"
+statement = "The kernel shall run from a TTBR1 linear map of RAM, reach devices through fixed high mappings, and leave TTBR0 with only the shared application compatibility mapping."
+status = "implemented"
+acceptance = [
+    "Link the kernel at virtual 0xffffffc000080000 and load it at physical 0x40080000; on entry to kernel_main, PC, SP, and VBAR_EL1 hold high virtual addresses inside the kernel image.",
+    "Map physical RAM 0x40000000-0x47ffffff linearly at 0xffffffc000000000 for EL1 only, and each mapped device page at 0xffffff8000000000 plus its physical address; all other TTBR1 addresses remain unmapped.",
+    "Remove the kernel identity mapping and invalidate stale TLB entries before kernel_main, so kernel and device physical addresses are unmapped in TTBR0.",
+    "TTBR0 then maps only the application slots at their physical addresses with EL0 rwx permission through one shared compatibility mapping.",
 ]

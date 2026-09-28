@@ -13,7 +13,7 @@
 
 static struct page *mem_map;
 static unsigned long mem_map_base_pfn;
-static unsigned long mem_map_pages;
+static unsigned long max_mapnr;
 static struct free_area free_area[MAX_ORDER];
 static unsigned long free_count;
 
@@ -48,7 +48,7 @@ static struct page *pfn_to_page(unsigned long pfn)
  */
 static bool pfn_valid(unsigned long pfn)
 {
-	return pfn >= mem_map_base_pfn && pfn < mem_map_base_pfn + mem_map_pages;
+	return pfn >= mem_map_base_pfn && pfn < mem_map_base_pfn + max_mapnr;
 }
 
 /**
@@ -78,7 +78,7 @@ struct page *phys_to_page(uintptr_t address)
  *
  * @return Total pages currently held in all free-area lists.
  */
-unsigned long page_alloc_free_count(void)
+unsigned long nr_free_pages(void)
 {
 	return free_count;
 }
@@ -90,16 +90,16 @@ unsigned long page_alloc_free_count(void)
  * @param pages Number of pages in the range.
  * @param map Caller-provided page descriptor array of @p pages entries.
  */
-void page_alloc_init(uintptr_t base, unsigned long pages, struct page *map)
+void free_area_init(uintptr_t base, unsigned long pages, struct page *map)
 {
 	mem_map = map;
 	mem_map_base_pfn = base >> PAGE_SHIFT;
-	mem_map_pages = pages;
+	max_mapnr = pages;
 	free_count = 0;
 	memset(map, 0, pages * sizeof(*map));
 	for (unsigned order = 0; order < MAX_ORDER; ++order) {
-		INIT_LIST_HEAD(&free_area[order].list);
-		free_area[order].count = 0;
+		INIT_LIST_HEAD(&free_area[order].free_list);
+		free_area[order].nr_free = 0;
 	}
 }
 
@@ -128,17 +128,17 @@ static void __free_one_page(struct page *page, unsigned order)
 		if (!(buddy->flags & PAGE_BUDDY) || buddy->order != order) {
 			break;
 		}
-		list_del(&buddy->list);
+		list_del(&buddy->lru);
 		buddy->flags &= ~PAGE_BUDDY;
-		free_area[order].count--;
+		free_area[order].nr_free--;
 		pfn &= ~(1UL << order);
 		page = pfn_to_page(pfn);
 		order++;
 	}
 	page->order = order;
 	page->flags |= PAGE_BUDDY;
-	list_add(&page->list, &free_area[order].list);
-	free_area[order].count++;
+	list_add(&page->lru, &free_area[order].free_list);
+	free_area[order].nr_free++;
 }
 
 /**
@@ -161,8 +161,8 @@ static struct page *expand(struct page *page, unsigned low, unsigned high)
 		half = &page[size];
 		half->order = high;
 		half->flags |= PAGE_BUDDY;
-		list_add(&half->list, &free_area[high].list);
-		free_area[high].count++;
+		list_add(&half->lru, &free_area[high].free_list);
+		free_area[high].nr_free++;
 	}
 	return page;
 }
@@ -184,13 +184,13 @@ struct page *alloc_pages(unsigned order)
 	for (unsigned current = order; current < MAX_ORDER; ++current) {
 		struct page *page;
 
-		if (list_empty(&free_area[current].list)) {
+		if (list_empty(&free_area[current].free_list)) {
 			continue;
 		}
-		page = list_first_entry(&free_area[current].list, struct page, list);
-		list_del(&page->list);
+		page = list_first_entry(&free_area[current].free_list, struct page, lru);
+		list_del(&page->lru);
 		page->flags &= ~PAGE_BUDDY;
-		free_area[current].count--;
+		free_area[current].nr_free--;
 		free_count -= 1UL << order;
 		return expand(page, order, current);
 	}
@@ -203,7 +203,7 @@ struct page *alloc_pages(unsigned order)
  * @param page First page of the block.
  * @param order Order used at allocation time.
  */
-void free_pages(struct page *page, unsigned order)
+void __free_pages(struct page *page, unsigned order)
 {
 	__free_one_page(page, order);
 	free_count += 1UL << order;
@@ -219,7 +219,7 @@ void free_pages(struct page *page, unsigned order)
  * @param start Start address of the range, rounded up to a page boundary.
  * @param end End address of the range, rounded down to a page boundary.
  */
-void page_alloc_free_range(uintptr_t start, uintptr_t end)
+void __free_memory_core(uintptr_t start, uintptr_t end)
 {
 	unsigned long pfn = (start + PAGE_SIZE - 1) >> PAGE_SHIFT;
 	unsigned long limit = end >> PAGE_SHIFT;
@@ -227,8 +227,8 @@ void page_alloc_free_range(uintptr_t start, uintptr_t end)
 	if (pfn < mem_map_base_pfn) {
 		pfn = mem_map_base_pfn;
 	}
-	if (limit > mem_map_base_pfn + mem_map_pages) {
-		limit = mem_map_base_pfn + mem_map_pages;
+	if (limit > mem_map_base_pfn + max_mapnr) {
+		limit = mem_map_base_pfn + max_mapnr;
 	}
 	while (pfn < limit) {
 		unsigned order = MAX_ORDER - 1;
@@ -236,7 +236,7 @@ void page_alloc_free_range(uintptr_t start, uintptr_t end)
 		while (order && ((pfn & ((1UL << order) - 1)) || pfn + (1UL << order) > limit)) {
 			order--;
 		}
-		free_pages(pfn_to_page(pfn), order);
+		__free_pages(pfn_to_page(pfn), order);
 		pfn += 1UL << order;
 	}
 }

@@ -6,13 +6,14 @@ foreach(NAME memory fault timer)
     set_target_properties(${NAME}_test PROPERTIES
         SUFFIX ".elf"
         RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
-        LINK_DEPENDS "${PROJECT_SOURCE_DIR}/kernel/linker.ld"
+        LINK_DEPENDS "${KERNEL_LINKER}"
     )
     target_link_libraries(${NAME}_test PRIVATE build_options kernel_lib kernel_mm)
     target_link_options(${NAME}_test PRIVATE
-        "LINKER:-T,${PROJECT_SOURCE_DIR}/kernel/linker.ld"
+        "LINKER:-T,${KERNEL_LINKER}"
         "LINKER:--wrap=kernel_main"
     )
+    add_dependencies(${NAME}_test kernel_linker)
     add_custom_command(
         OUTPUT "${PROJECT_BINARY_DIR}/${NAME}_test.bin"
         COMMAND "${CMAKE_OBJCOPY}" -O binary "$<TARGET_FILE:${NAME}_test>"

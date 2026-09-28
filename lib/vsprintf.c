@@ -203,9 +203,12 @@ static char *number(char *buf, char *end, long long num, int base, int size, int
 	if (num == 0) {
 		tmp[i++] = '0';
 	} else {
-		while (num != 0) {
-			tmp[i++] = digits[num % base];
-			num /= base;
+		/* Unsigned like the original do_div(), so bit 63 cannot yield a negative digit. */
+		unsigned long long value = (unsigned long long)num;
+
+		while (value != 0) {
+			tmp[i++] = digits[value % (unsigned)base];
+			value /= (unsigned)base;
 		}
 	}
 	if (i > precision) {

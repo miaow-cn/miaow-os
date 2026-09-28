@@ -7,10 +7,10 @@ One entry per imported component, as required by [development.md](development.md
 
 ## MMU Design References (No Imported Code)
 
-- Scope: [mmu.c](../mm/mmu.c) and its call from [boot.S](../kernel/boot.S).
+- Scope: [mmu.c](../mm/mmu.c), [boot.S](../kernel/boot.S), [linker.ld.S](../kernel/linker.ld.S), and [memory.h](../include/miaow/memory.h).
 - The earliest ARM64 boot implementation is `arch/arm64/kernel/head.S` at `9703d9d7f77ce129621f7d80a844822e2daa7008`. Register setup and descriptor definitions were checked against `arch/arm64/mm/proc.S` and `arch/arm64/include/asm/pgtable-hwdef.h` at tag `v3.7` in the Linux kernel.
-- These historical files predate SPDX tags and explicitly license their code under GPL version 2 only. No code or notices from them are incorporated.
-- The fixed three-level, page-only RAM/device tables need none of Linux's block mapping, relocation, high-address transition, CPU selection, SMP, or cache maintenance implementation. Too little remains for a recognizable port; this is original GPL-3.0-or-later code using architecture-defined descriptors and the publish/configure/TLBI/enable sequence. It introduces no additional GPL-2.0-only distribution dependency.
+- The high-address switch follows the same `head.S` revision: an `idmap_pg_dir` in TTBR0 and `swapper_pg_dir` in TTBR1, `__enable_mmu`/`__turn_mmu_on`, then an absolute branch to `__mmap_switched`. The kernel lives inside the linear map at `PAGE_OFFSET = 0xffffffc000000000`, and `__pa`/`__va`/`virt_to_page` follow `arch/arm64/include/asm/memory.h` at tag `v3.7`. Dropping the low mapping after the switch mirrors `cpu_set_reserved_ttbr0()` in `paging_init()` from `arch/arm64/mm/mmu.c` at `v3.7`.
+- The fixed three-level, page-only RAM/device tables need none of Linux's block mapping, relocation, CPU selection, SMP, data copying, or cache maintenance implementation. The idmap borrows the linear map's L3 tables instead of creating its own. Too little remains for a recognizable port; this is original GPL-3.0-or-later code using architecture-defined descriptors, the publish/configure/TLBI/enable sequence, and one-line address conversions.
 
 ## String Alignment References (No Imported Code)
 

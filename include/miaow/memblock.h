@@ -14,7 +14,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define MEMBLOCK_MAX_REGIONS 16
+#define INIT_MEMBLOCK_REGIONS 16
 
 struct memblock_region {
 	uintptr_t base;
@@ -22,9 +22,9 @@ struct memblock_region {
 };
 
 struct memblock_type {
-	unsigned count;
+	unsigned cnt;
 	size_t total_size;
-	struct memblock_region regions[MEMBLOCK_MAX_REGIONS];
+	struct memblock_region regions[INIT_MEMBLOCK_REGIONS];
 };
 
 struct memblock {
@@ -42,9 +42,9 @@ extern struct memblock memblock;
 
 int memblock_add(uintptr_t base, size_t size);
 int memblock_reserve(uintptr_t base, size_t size);
-int memblock_free(uintptr_t base, size_t size);
+int memblock_phys_free(uintptr_t base, size_t size);
 /* Returns uninitialized memory, or zero when no free range fits. */
-uintptr_t memblock_alloc(size_t size, size_t align);
+uintptr_t memblock_phys_alloc(size_t size, size_t align);
 bool memblock_next_free(struct memblock_cursor *cursor, uintptr_t *start, uintptr_t *end);
 
 #endif /* _MEMBLOCK_H */

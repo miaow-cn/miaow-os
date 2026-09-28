@@ -40,6 +40,10 @@ int main(int argc, char **argv)
 
 	check("0000000040080000", buffer,
 	      snprintf(buffer, sizeof(buffer), "%016lx", 0x40080000UL));
+	check("ffffffc000080800", buffer,
+	      snprintf(buffer, sizeof(buffer), "%016lx", 0xffffffc000080800UL));
+	check("18446744073709551615", buffer,
+	      snprintf(buffer, sizeof(buffer), "%lu", 0xffffffffffffffffUL));
 	check("-42", buffer, snprintf(buffer, sizeof(buffer), "%d", -42));
 	check("42", buffer, snprintf(buffer, sizeof(buffer), "%i", 42));
 	check("4000000000", buffer, snprintf(buffer, sizeof(buffer), "%u", 4000000000U));
