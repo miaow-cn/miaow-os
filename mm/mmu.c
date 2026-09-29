@@ -7,23 +7,23 @@
 #include "kernel.h"
 #include "abi.h"
 
-#define PTRS_PER_PGD    512
-#define PTRS_PER_PMD    512
-#define PTRS_PER_PTE    512
-#define PGDIR_SHIFT     30
-#define PMD_SHIFT       21
-#define RAM_TABLES      (RAM_SIZE >> PMD_SHIFT)
-#define pgd_index(addr) (((uintptr_t)(addr) >> PGDIR_SHIFT) & (PTRS_PER_PGD - 1))
-#define pmd_index(addr) (((uintptr_t)(addr) >> PMD_SHIFT) & (PTRS_PER_PMD - 1))
-#define pte_index(addr) (((uintptr_t)(addr) >> PAGE_SHIFT) & (PTRS_PER_PTE - 1))
-#define PMD_TYPE_TABLE  3UL
-#define PTE_TYPE_PAGE   3UL
-#define PTE_ATTRINDX(t) ((uint64_t)(t) << 2)
-#define PTE_USER        (1UL << 6)
-#define PTE_SHARED      (3UL << 8)
-#define PTE_AF          (1UL << 10)
-#define PTE_PXN         (1UL << 53)
-#define PTE_UXN         (1UL << 54)
+#define PTRS_PER_PGD     512
+#define PTRS_PER_PMD     512
+#define PTRS_PER_PTE     512
+#define PGDIR_SHIFT      30
+#define PMD_SHIFT        21
+#define RAM_TABLES       (RAM_SIZE >> PMD_SHIFT)
+#define pgd_index(addr)  (((uintptr_t)(addr) >> PGDIR_SHIFT) & (PTRS_PER_PGD - 1))
+#define pmd_index(addr)  (((uintptr_t)(addr) >> PMD_SHIFT) & (PTRS_PER_PMD - 1))
+#define pte_index(addr)  (((uintptr_t)(addr) >> PAGE_SHIFT) & (PTRS_PER_PTE - 1))
+#define PMD_TYPE_TABLE   3UL
+#define PTE_TYPE_PAGE    3UL
+#define PTE_ATTRINDX(t)  ((uint64_t)(t) << 2)
+#define PTE_USER         (1UL << 6)
+#define PTE_SHARED       (3UL << 8)
+#define PTE_AF           (1UL << 10)
+#define PTE_PXN          (1UL << 53)
+#define PTE_UXN          (1UL << 54)
 #define MT_DEVICE_nGnRnE 0
 #define MT_NORMAL_NC     1
 #define MAIR(attr, mt)   ((uint64_t)(attr) << ((mt) * 8))
@@ -51,7 +51,7 @@
  * | 0xffffff8008000000..0xffffff800800ffff | 0x08000000..0x0800ffff | GICD       |   rw-   | nGnRnE        |
  * | 0xffffff80080a0000..0xffffff80080bffff | 0x080a0000..0x080bffff | GICR + SGI |   rw-   | nGnRnE        |
  * | 0xffffff8009000000..0xffffff8009000fff | 0x09000000..0x09000fff | PL011      |   rw-   | nGnRnE        |
- * | 0xffffffc000000000..0xffffffc007ffffff | 0x40000000..0x47ffffff | linear map |   rwx   | in, out+in nc |
+ * | 0xffffffc000000000..0xffffffc007ffffff | 0x40000000..0x47ffffff | pmd_ram map |   rwx   | in, out+in nc |
  * |   0xffffffc000080000..                 |   0x40080000..         |   kernel   |         |               |
  * +----------------------------------------+------------------------+------------+---------+---------------+
  *
@@ -64,11 +64,11 @@
  * +----------------------------------------+------------------------+------------+---------+---------+
  *
  * Tables, [index]:
- *   TTBR1 swapper_pg_dir[0]   -> devices[64] -> gic[0..15], gic[160..191]
- *                                devices[72] -> uart[0]
- *         swapper_pg_dir[256] -> linear[0..63] -> ram[0..63][0..511]
- *   TTBR0 user_root[1]        -> user[8] -> apps[0..95]
- *                                user[0..] -> ram[0..]: identity map, borrowed from the
+ *   TTBR1 swapper_pg_dir[0]   -> pmd_io[64] -> pte_gic[0..15], pte_gic[160..191]
+ *                                pmd_io[72] -> pte_uart[0]
+ *         swapper_pg_dir[256] -> pmd_ram[0..63] -> pte_ram[0..63][0..511]
+ *   TTBR0 user_pd_dir[1]        -> pmd_user[8] -> pte_user[0..95]
+ *                                pmd_user[0..] -> pte_ram[0..]: identity map, borrowed from the
  *                                linear map and cleared by cpu_uninstall_idmap() before
  *                                start_kernel
  *
@@ -88,34 +88,33 @@
 /* clang-format on */
 
 static alignas(PAGE_SIZE) struct {
-	uint64_t swapper_pg_dir[PTRS_PER_PGD];
-	uint64_t devices[PTRS_PER_PMD];
-	uint64_t linear[PTRS_PER_PMD];
-	uint64_t gic[PTRS_PER_PTE];
-	uint64_t uart[PTRS_PER_PTE];
-	uint64_t ram[RAM_TABLES][PTRS_PER_PTE];
-	uint64_t user_root[PTRS_PER_PGD];
-	uint64_t user[PTRS_PER_PMD];
-	uint64_t apps[PTRS_PER_PTE];
+	uint64_t swapper_pg_dir[PTRS_PER_PGD];      /* TTBR1 L1: kernel mappings */
+	uint64_t pmd_io[PTRS_PER_PMD];              /* L2 under IO_OFFSET: GIC and UART */
+	uint64_t pmd_ram[PTRS_PER_PMD];             /* L2 under PAGE_OFFSET: all of RAM */
+	uint64_t pte_gic[PTRS_PER_PTE];             /* L3: GICD, GICR + SGI pages */
+	uint64_t pte_uart[PTRS_PER_PTE];            /* L3: PL011 page */
+	uint64_t pte_ram[RAM_TABLES][PTRS_PER_PTE]; /* L3: linear map, one table per 2 MiB of RAM */
+	uint64_t user_pg_dir[PTRS_PER_PGD];         /* TTBR0 L1: user mappings */
+	uint64_t pmd_user[PTRS_PER_PMD];            /* L2: apps plus the boot-time identity map */
+	uint64_t pte_user[PTRS_PER_PTE];            /* L3: application slots */
 } boot_tables;
 
 static void map_identity(bool present)
 {
-	for (uintptr_t index = pmd_index(_text); index <= pmd_index((uintptr_t)_end - 1);
-	     ++index) {
-		boot_tables.user[index] = present ? boot_tables.linear[index] : 0;
+	for (uintptr_t i = pmd_index(_text); i <= pmd_index((uintptr_t)_end - 1); i++) {
+		boot_tables.pmd_user[i] = present ? boot_tables.pmd_ram[i] : 0;
 	}
 }
 
 static void map_device(uint64_t *table, uintptr_t start, uintptr_t end)
 {
-	for (uintptr_t address = start; address < end; address += PAGE_SIZE) {
+	for (uintptr_t addr = start; addr < end; addr += PAGE_SIZE) {
 		/*
 		 * Device-nGnRnE, EL1 read/write only, execute-never at EL0 and EL1.
 		 * AF preset because hardware management is off (TCR_EL1.HA=0).
 		 */
-		table[pte_index(address)] = address | PTE_TYPE_PAGE | PTE_AF |
-					    PTE_ATTRINDX(MT_DEVICE_nGnRnE) | PTE_PXN | PTE_UXN;
+		table[pte_index(addr)] =
+			addr | PTE_TYPE_PAGE | PTE_AF | PTE_ATTRINDX(MT_DEVICE_nGnRnE) | PTE_PXN | PTE_UXN;
 	}
 }
 
@@ -143,14 +142,12 @@ void mmu_init(void)
 	 */
 	/* clang-format on */
 	/* Runs with the MMU off: PC-relative symbol addresses here are physical. */
-	boot_tables.swapper_pg_dir[pgd_index(IO_OFFSET)] =
-		(uintptr_t)boot_tables.devices | PMD_TYPE_TABLE;
-	boot_tables.swapper_pg_dir[pgd_index(PAGE_OFFSET)] =
-		(uintptr_t)boot_tables.linear | PMD_TYPE_TABLE;
-	boot_tables.devices[pmd_index(0x08000000)] = (uintptr_t)boot_tables.gic | PMD_TYPE_TABLE;
-	boot_tables.devices[pmd_index(0x09000000)] = (uintptr_t)boot_tables.uart | PMD_TYPE_TABLE;
-	boot_tables.user_root[pgd_index(APP_FIRST)] = (uintptr_t)boot_tables.user | PMD_TYPE_TABLE;
-	boot_tables.user[pmd_index(APP_FIRST)] = (uintptr_t)boot_tables.apps | PMD_TYPE_TABLE;
+	boot_tables.swapper_pg_dir[pgd_index(IO_OFFSET)] = (uintptr_t)boot_tables.pmd_io | PMD_TYPE_TABLE;
+	boot_tables.swapper_pg_dir[pgd_index(PAGE_OFFSET)] = (uintptr_t)boot_tables.pmd_ram | PMD_TYPE_TABLE;
+	boot_tables.pmd_io[pmd_index(0x08000000)] = (uintptr_t)boot_tables.pte_gic | PMD_TYPE_TABLE;
+	boot_tables.pmd_io[pmd_index(0x09000000)] = (uintptr_t)boot_tables.pte_uart | PMD_TYPE_TABLE;
+	boot_tables.user_pg_dir[pgd_index(APP_FIRST)] = (uintptr_t)boot_tables.pmd_user | PMD_TYPE_TABLE;
+	boot_tables.pmd_user[pmd_index(APP_FIRST)] = (uintptr_t)boot_tables.pte_user | PMD_TYPE_TABLE;
 
 	/* clang-format off */
 	/*
@@ -204,31 +201,31 @@ void mmu_init(void)
 	 */
 	/* clang-format on */
 
-	map_device(boot_tables.gic, 0x08000000, 0x08010000);
-	map_device(boot_tables.gic, 0x080a0000, 0x080c0000);
-	map_device(boot_tables.uart, 0x09000000, 0x09001000);
+	map_device(boot_tables.pte_gic, 0x08000000, 0x08010000);
+	map_device(boot_tables.pte_gic, 0x080a0000, 0x080c0000);
+	map_device(boot_tables.pte_uart, 0x09000000, 0x09001000);
 
-	for (unsigned index = 0; index < RAM_TABLES; ++index) {
-		boot_tables.linear[index] = (uintptr_t)boot_tables.ram[index] | PMD_TYPE_TABLE;
-		for (unsigned page = 0; page < PTRS_PER_PTE; ++page) {
-			uintptr_t address = PHYS_OFFSET + ((uintptr_t)index << PMD_SHIFT) +
-					    ((uintptr_t)page << PAGE_SHIFT);
+	for (unsigned i = 0; i < RAM_TABLES; i++) {
+		boot_tables.pmd_ram[i] = (uintptr_t)boot_tables.pte_ram[i] | PMD_TYPE_TABLE;
+		for (unsigned page = 0; page < PTRS_PER_PTE; page++) {
+			uintptr_t address = PHYS_OFFSET + ((uintptr_t)i << PMD_SHIFT) + ((uintptr_t)page << PAGE_SHIFT);
 
 			/*
 			 * AF preset because hardware management is off (TCR_EL1.HA=0),
 			 * inner-shareable, Normal Outer+Inner Non-Cacheable, EL1 only
 			 */
-			boot_tables.ram[index][page] = address | PTE_TYPE_PAGE | PTE_AF |
-						       PTE_SHARED | PTE_ATTRINDX(MT_NORMAL_NC);
+			boot_tables.pte_ram[i][page] =
+				address | PTE_TYPE_PAGE | PTE_AF | PTE_SHARED | PTE_ATTRINDX(MT_NORMAL_NC);
 		}
 	}
 
 	/* EL0 and EL1 can read and write, EL0 can execute */
-	for (uintptr_t address = APP_FIRST; address < APP_FIRST + APP_COUNT * APP_SLOT_SIZE;
-	     address += PAGE_SIZE) {
-		boot_tables.apps[pte_index(address)] = address | PTE_TYPE_PAGE | PTE_AF | PTE_SHARED |
-						       PTE_ATTRINDX(MT_NORMAL_NC) | PTE_USER;
+	for (uintptr_t addr = APP_FIRST; addr < APP_FIRST + APP_COUNT * APP_SLOT_SIZE; addr += PAGE_SIZE) {
+		boot_tables.pte_user[pte_index(addr)] =
+			addr | PTE_TYPE_PAGE | PTE_AF | PTE_SHARED | PTE_ATTRINDX(MT_NORMAL_NC) | PTE_USER;
 	}
+
+	/* borrow the identity map from the kernel mapping */
 	map_identity(true);
 
 	__asm__ volatile("dsb sy" : : : "memory");
@@ -239,7 +236,8 @@ void mmu_init(void)
 	 * 64 - 25 = 39 bits of VA in each of TTBR0 and TTBR1
 	 * TTBR0 and TTBR1 page tables: Normal memory, Inner+Outer Non-cacheable, Inner shareable,
 	 *     4KB page; current ASID is from TTBR0
-	 * EPD0 = EPD1 = 0: both halves are walked. TBI0 = TBI1 = 0: no top-byte ignore.
+	 * EPD0 = EPD1 = 0: both halves are walked.
+	 * TBI0 = TBI1 = 0: no top-byte ignore.
 	 * HA = HD = 0: no hardware access flag or dirty state management.
 	 * IPS: 32 bits for PA addressing
 	 *     Cortex-A710 implements 40-bit PA(ID_AA64MMFR0_EL1.PARange = 0b0010) all current
@@ -250,7 +248,7 @@ void mmu_init(void)
 
 	/* 4 KB-aligned base: bits 11:0 are zero, so CnP (bit 0) is clear
 	 * and ASID (bits 63:48) stays 0. */
-	write_sysreg((uintptr_t)boot_tables.user_root, ttbr0_el1);
+	write_sysreg((uintptr_t)boot_tables.user_pg_dir, ttbr0_el1);
 	write_sysreg((uintptr_t)boot_tables.swapper_pg_dir, ttbr1_el1);
 
 	/* invalidate TLB */
@@ -264,9 +262,7 @@ void mmu_init(void)
 
 	/* enable MMU, disable align check, disable data & instruction cache, allow execute on
 	 * writable memory */
-	write_sysreg((read_sysreg(sctlr_el1) &
-		      ~((1UL << 1) | (1UL << 2) | (1UL << 12) | (1UL << 19))) |
-			     1UL,
+	write_sysreg((read_sysreg(sctlr_el1) & ~((1UL << 1) | (1UL << 2) | (1UL << 12) | (1UL << 19))) | 1UL,
 		     sctlr_el1);
 	__asm__ volatile("isb" : : : "memory");
 }

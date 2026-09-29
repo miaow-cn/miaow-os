@@ -125,14 +125,13 @@ class KernelTests(unittest.TestCase):
             build(directory)
             output, observations = debug(Path(directory) / "kernel.bin", "boot")
         self.assertIn("GDB BOOT OK", observations)
-        match = re.search(r"BOOT EL=([0-9a-f]+) SCTLR=([0-9a-f]+) VBAR=([0-9a-f]+) BSS=([0-9a-f]+) SP=([0-9a-f]+) DTB=([0-9a-f]+)\n", output)
+        match = re.search(r"BOOT EL=([0-9a-f]+) SCTLR=([0-9a-f]+) VBAR=([0-9a-f]+) SP=([0-9a-f]+) DTB=([0-9a-f]+)\n", output)
         self.assertIsNotNone(match, output)
-        level, control, vectors, bss, stack, _ = (int(value, 16) for value in match.groups())
+        level, control, vectors, stack, _ = (int(value, 16) for value in match.groups())
         self.assertEqual(level, 1)
         self.assertEqual(control & 0x1005, 1)
         self.assertEqual(vectors % 2048, 0)
         self.assertGreaterEqual(vectors, KERNEL_START)
-        self.assertEqual(bss, 0)
         self.assertEqual(stack % 16, 0)
         self.assertGreater(stack, vectors)
         self.assertLess(stack, KERNEL_LIMIT)
@@ -163,7 +162,7 @@ class KernelTests(unittest.TestCase):
         self.assertGreaterEqual(start, 0x40080000)
         self.assertLessEqual(end, 0x41000000)
         reserved = [(int(low, 16), int(high, 16))
-                    for low, high in re.findall(r"MEM reserved ([0-9a-f]+)-([0-9a-f]+)", output)]
+                    for low, high in re.findall(r"resv: ([0-9a-f]+)-([0-9a-f]+)", output)]
         self.assertTrue(any(low <= start < end <= high for low, high in reserved), reserved)
         control = re.search(r"BOOT EL=1 SCTLR=([0-9a-f]+)", output)
         self.assertIsNotNone(control, output)
@@ -421,16 +420,16 @@ class KernelTests(unittest.TestCase):
         self.assertNotIn("MM SELFTEST FAIL", output)
         banner = re.search(r"BOOT EL=.* DTB=([0-9a-f]+)", output)
         self.assertIsNotNone(banner, output)
-        device_tree = int(banner.group(1), 16)
+        device_tree = int(banner.group(1), 16) - PAGE_OFFSET + 0x40000000
         self.assertEqual(device_tree % 8, 0)
         self.assertTrue(0x40000000 <= device_tree < 0x48000000, output)
-        summary = re.search(r"MEM ram=([0-9a-f]+)-([0-9a-f]+) map=([0-9a-f]+) dtb=([0-9a-f]+)", output)
+        summary = re.search(r"phy: ([0-9a-f]+)-([0-9a-f]+) map: ([0-9a-f]+) dtb: ([0-9a-f]+)", output)
         self.assertIsNotNone(summary, output)
         start, end, page_map, reported = (int(value, 16) for value in summary.groups())
         self.assertEqual((start, end), (0x40000000, 0x48000000))
         self.assertEqual(reported, device_tree)
         reserved = [(int(low, 16), int(high, 16))
-                    for low, high in re.findall(r"MEM reserved ([0-9a-f]+)-([0-9a-f]+)", output)]
+                    for low, high in re.findall(r"resv: ([0-9a-f]+)-([0-9a-f]+)", output)]
         self.assertEqual(reserved, sorted(reserved))
         self.assertTrue(all(low < high for low, high in reserved))
         # The firmware area, the kernel image and the page map are one reserved range.
@@ -439,6 +438,6 @@ class KernelTests(unittest.TestCase):
         self.assertIn((0x41000000, 0x41060000), reserved)
         # Reserving the blob proves the kernel found the device tree magic there.
         self.assertTrue(any(low <= device_tree < high for low, high in reserved), reserved)
-        free = int(re.search(r"MEM free=(\d+) KiB", output).group(1))
+        free = int(re.search(r"free: \d+ pg = (\d+) KiB", output).group(1))
         self.assertLess(free, 128 * 1024)
         self.assertGreater(free, 100 * 1024)

@@ -215,9 +215,9 @@ static void mmu_selftest(void)
 		IO_ADDRESS(0x080a0000 - PAGE_SIZE), IO_ADDRESS(0x080c0000),
 		IO_ADDRESS(0x09000000 - PAGE_SIZE), IO_ADDRESS(0x09001000),
 	};
-	uintptr_t user_root = read_sysreg(ttbr0_el1);
+	uintptr_t user_pg_dir = read_sysreg(ttbr0_el1);
 	uintptr_t swapper_pg_dir = read_sysreg(ttbr1_el1);
-	walk(user_root, 0);
+	walk(user_pg_dir, 0);
 	walk(swapper_pg_dir, 0xffffff8000000000UL);
 	CHECK(table_count == TABLES);
 	uintptr_t low = tables[0];
@@ -230,7 +230,7 @@ static void mmu_selftest(void)
 		check_translation(holes[index], 0, UNMAPPED);
 	}
 	printk("MMU TCR=%016lx MAIR=%016lx TTBR0=%016lx TTBR1=%016lx tables=%016lx-%016lx\n",
-	       read_sysreg(tcr_el1), read_sysreg(mair_el1), user_root, swapper_pg_dir, low,
+	       read_sysreg(tcr_el1), read_sysreg(mair_el1), user_pg_dir, swapper_pg_dir, low,
 	       high + PAGE_SIZE);
 	printk("MMU SELFTEST OK ram=%u device=%u user=%u\n", pages[RAM], pages[DEVICE],
 	       pages[USER]);

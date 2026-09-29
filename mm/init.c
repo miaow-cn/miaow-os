@@ -41,8 +41,7 @@ void mem_init(void)
 	uintptr_t end;
 	uintptr_t map;
 
-	if (memblock_add(PHYS_OFFSET, RAM_SIZE) ||
-	    memblock_reserve(PHYS_OFFSET, __pa(_end) - PHYS_OFFSET) ||
+	if (memblock_add(PHYS_OFFSET, RAM_SIZE) || memblock_reserve(PHYS_OFFSET, __pa(_end) - PHYS_OFFSET) ||
 	    memblock_reserve(APP_FIRST, (size_t)APP_COUNT * APP_SLOT_SIZE)) {
 		kernel_panic();
 	}
@@ -56,15 +55,16 @@ void mem_init(void)
 	while (memblock_next_free(&cursor, &start, &end)) {
 		__free_memory_core(start, end);
 	}
+	pages = nr_free_pages();
 	kmem_cache_init();
 
-	printk("MEM ram=%016lx-%016lx map=%016lx dtb=%016lx\n", (uintptr_t)PHYS_OFFSET,
+	printk("phy: %016lx-%016lx map: %016lx dtb: %016lx\n", (uintptr_t)PHYS_OFFSET,
 	       (uintptr_t)PHYS_OFFSET + RAM_SIZE, map, __fdt_pointer);
 	for (unsigned index = 0; index < memblock.reserved.cnt; ++index) {
 		struct memblock_region *region = &memblock.reserved.regions[index];
 
-		printk("MEM reserved %016lx-%016lx\n", region->base, region->base + region->size);
+		printk("resv: %016lx-%016lx\n", region->base, region->base + region->size);
 	}
-	printk("MEM free=%lu KiB\n", nr_free_pages() << (PAGE_SHIFT - 10));
+	printk("tot: %lu pg = %lu KiB, free: %lu pg = %lu KiB\n", pages, pages << (PAGE_SHIFT - 10), nr_free_pages(),
+	       nr_free_pages() << (PAGE_SHIFT - 10));
 }
-
