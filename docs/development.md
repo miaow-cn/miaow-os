@@ -15,7 +15,7 @@
 | `acceptance` | Nonempty list of nonblank, measurable criteria |
 | `status` | `planned`, `implemented`, or `retired` |
 
-Add requirements before implementation: `planned` until code and acceptance tests exist, then `implemented`, then run the gate. IDs are permanent — keep retired entries, never renumber/reuse; use Git history, not a change log. Evolving a contract updates its entry; distinct behavior gets a new ID; bug fixes reuse the original requirement. Traceability is one-way: tests name the requirements they verify; requirements never name tests, fixtures, or verification methods. Write criteria as observable behavior, not suite work. Language, authorship, and Git policies live in [AGENTS.md](../AGENTS.md), not in requirements. Status and passing evidence are separate: rerun the gate after changes toward the first OS milestone.
+Add requirements before implementation: `planned` until code and acceptance tests exist, then `implemented`, then run the gate. IDs are permanent — keep retired entries, never renumber/reuse; use Git history, not a change log. Evolving a contract updates its entry; distinct behavior gets a new ID; bug fixes reuse the original requirement. Traceability is one-way: tests name the requirements they verify; requirements never name tests, fixtures, or verification methods. Write criteria as observable behavior, not suite work. Language, authorship, and Git policies live in [AGENTS.md](../AGENTS.md), not in requirements. Status and passing evidence are separate: rerun the gate after changes.
 
 ## Tests and Evidence
 
@@ -44,7 +44,7 @@ The old report is deleted before validation; structural errors yield a failing r
 
 Tool regressions use temporary fixture projects and subprocesses to check failure exit codes without recursively running the project suite. Kernel tests build into temporary directories, run QEMU with a ten-second deadline, capture serial diagnostics, and terminate/reap emulators even on failure. Add host unit tests for hardware-independent logic; host success does not prove target behavior.
 
-Production `kernel/`, `mm/`, and `lib/` sources have no test-only switches, assertion blocks, or self-test entry points. `tests/CMakeLists.txt` defines three explicit, non-default targets:  memory_test_image`, `fault_test_image`, and `timer_test_image`. For example:
+Production `kernel/`, `mm/`, and `lib/` sources have no test-only switches, assertion blocks, or self-test entry points. `tests/CMakeLists.txt` defines three explicit, non-default targets: `memory_test_image`, `fault_test_image`, and `timer_test_image`. For example:
 
 ```sh
 cmake --build build --target memory_test_image
@@ -60,9 +60,9 @@ The boot check dirties BSS externally before `_start`, checks the entire cleared
 
 Complete = requirements, implementation, linked tests, and affected docs agree; focused tests and full gate pass; licensing reviewed. Report unverified items explicitly; keep explanations short and tied to the change. No auto-commit, no reformatting unrelated code, no placeholder subsystems, no CI/container infrastructure until needed; a future CI job should reuse the local gate.
 
-First boot target: QEMU `virt`, Cortex-A710 (Armv9-A), GICv3, 1 CPU, 128 MiB RAM, headless serial, virtualization/security extensions off. Kernel at EL1, apps at EL0; startup enables the MMU through a temporary identity map and enters C `start_kernel()` at high virtual addresses, with caches kept off. Document with the boot test: verified versioned machine, device addresses, entry exception level, load address, working tool versions. Fixed addresses are scoped to that tested platform, not a portability guarantee across QEMU versions. Confirm real `-std=c23` freestanding cross-compilation for Cortex-A710; never silently downgrade the standard or install another toolchain. An existing Linux cross compiler is acceptable with freestanding flags and no hosted link inputs.
+Fixed addresses are scoped to the tested platform documented in [architecture.md](architecture.md), not a portability guarantee across QEMU versions. Confirm real `-std=c23` freestanding cross-compilation for Cortex-A710; never silently downgrade the standard or install another toolchain. An existing Linux cross compiler is acceptable with freestanding flags and no hosted link inputs.
 
-The [first milestone design](../README.md#first-os-milestone) explains the execution path and exclusions. Add code in boot → EL0/syscall → preemption increments, testing each first. Keep new requirements planned until implementation and linked behavioral tests exist. Missing QEMU or compilers blocks acceptance; source-text tests or skips are no substitute for execution.
+[Architecture](architecture.md) documents the execution path and exclusions. Keep new requirements planned until implementation and linked behavioral tests exist. Missing QEMU or compilers blocks acceptance; source-text tests or skips are no substitute for execution.
 
 Run `.venv/bin/python -m unittest tests.test_kernel -v` for the OS slice, then the full gate. The host scheduler harness exhausts all three-task runnable combinations. QEMU fixtures and external debugger checks cover no-SVC preemption with integer register patterns, syscall boundaries, EL0/EL1 faults, spurious interrupts, and task termination. The BSS check does not rely on QEMU's zeroed RAM. Shared string assertions have separate host and target entry files, not compile-time branches in the implementation.
 

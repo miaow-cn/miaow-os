@@ -8,8 +8,7 @@ See [Architecture](docs/architecture.md) for the execution path, address map, AB
 
 ## Quick Start
 
-Requires CMake 3.20+, Ninja, C23-capable AArch64 GCC/binutils, QEMU with Cortex-A710 and `virt-10.1` support, a C23-capable host `cc` for the scheduler test, and Python
-3.11+ with `venv`. The full test suite also requires an AArch64-capable GDB with Python support. On Fedora, missing tools can be installed manually with
+Requires CMake 3.21+, a C23-capable AArch64 GCC/binutils, QEMU with Cortex-A710 and `virt-10.1` support, a C23-capable host `cc` for the scheduler test, and Python 3.11+ with `venv`. The examples use Ninja; dropping `-G Ninja` selects the default Make generator instead. The full test suite also requires an AArch64-capable GDB with Python support. On Fedora, missing tools can be installed manually with
 
 ```sh
 sudo dnf install cmake ninja-build gcc gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu qemu-system-aarch64 gdb
@@ -29,7 +28,7 @@ cmake --build build
 cmake --build build --target run
 ```
 
-The apps run and exits with status zero. Log order varies with timer delivery. After `ALL APPS DONE`, the timer is disabled and the kernel idles; QEMU remains running. Press Ctrl-C to stop.
+The apps run and exit with status zero. Log order varies with timer delivery. After `ALL APPS DONE`, the timer is disabled and the kernel idles; QEMU remains running. Press Ctrl-C to stop.
 
 ## Configure
 
@@ -46,7 +45,7 @@ cmake -S . -B build/preempt -G Ninja \
 cmake --build build/preempt --target run
 ```
 
-### Testing
+## Testing
 
 From the repository root:
 
@@ -56,7 +55,7 @@ python -m unittest tests.test_kernel -v
 python tools/check.py
 ```
 
-The check validates requirements and test links, executes tests, and writes the current traceability report to `build/test-results.json`. 
+The check validates requirements and test links, executes tests, and writes the current traceability report to `build/test-results.json`.
 
 Production sources have no test-only switches. Tests use separate entry points linked with the same kernel object files, plus external GDB observations of the normal image.
 See [Development](docs/development.md#tests-and-evidence) for test-image targets.
@@ -71,7 +70,7 @@ cmake --build build --target clean
 
 ## Working With Agents
 
-[AGENTS.md](AGENTS.md) is the sole project instruction source. 
+[AGENTS.md](AGENTS.md) is the sole project instruction source.
 
 Describe the next capability and constraints. The agent updates requirements, implementation, tests, and relevant docs.
 
@@ -82,4 +81,4 @@ Describe the next capability and constraints. The agent updates requirements, im
 
 ## License
 
-Original project content: GPL-3.0-or-later. Third-party content retains its own or compatible license. Check [the third-party codes](docs/third-party.md) for details.
+Original project content: GPL-3.0-or-later. Third-party content retains its own or compatible license. See the [third-party inventory](docs/third-party.md) for details.

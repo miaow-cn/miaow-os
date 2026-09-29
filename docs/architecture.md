@@ -106,13 +106,13 @@ Drivers use `IO_ADDRESS()`.
 
 The switch follows Linux's `__enable_mmu`/`__turn_mmu_on`/`__mmap_switched`:
 
-1. [boot.S](../kernel/boot.S) runs at physical addresses to set the stack, clear BSS
-   , and save the DTB.
+1. [boot.S](../kernel/boot.S) runs at physical addresses to set the stack, clear BSS,
+   and save the DTB.
 2. `mmu_init()` also runs at physical addresses. It fills both halves and temporarily
    points the TTBR0 L2 entries covering the kernel image at the linear map's own
    L3 tables. This creates an identity map without extra tables. It programs
    MAIR/TCR/TTBR0/TTBR1, and sets `SCTLR_EL1.M`. `A`, `C`, `I`, and `WXN` are
-   explicitly cleared. Its return still execute from the identity map.
+   explicitly cleared. Its return still executes from the identity map.
 3. A `BR` enters the link-time address of `__mmap_switched` at high mapping.
    The stack and `VBAR_EL1` are reloaded with high addresses. `cpu_uninstall_idmap()`
    clears the borrowed entries before `start_kernel()`.
@@ -192,5 +192,3 @@ repackaging, and all runnable-task combinations. All test-only code lives in
 `tests/`. Separate test images reuse the normal kernel object files, using
 link-time entry wrapping, without test switches or hooks in production sources.
 The normal demo image is still built and tested independently.
-
-s
