@@ -26,8 +26,8 @@ uintptr_t __fdt_pointer;
 	uintptr_t stack;
 	__asm__ volatile("mov %0, sp" : "=r"(stack));
 	printk("BOOT EL=%u SCTLR=%016lx VBAR=%016lx SP=%016lx DTB=%016lx\n",
-	       (unsigned int)(read_sysreg(CurrentEL) >> 2), read_sysreg(sctlr_el1),
-	       read_sysreg(vbar_el1), stack, (uintptr_t)__va(__fdt_pointer));
+	       (unsigned int)(read_sysreg(CurrentEL) >> 2), read_sysreg(sctlr_el1), read_sysreg(vbar_el1), stack,
+	       (uintptr_t)__va(__fdt_pointer));
 	printk("BOOT OK\n");
 	mem_init();
 	start_apps();

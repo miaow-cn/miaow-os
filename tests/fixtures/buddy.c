@@ -29,7 +29,7 @@ int main(void)
 	assert(nr_free_pages() == PAGES);
 
 	/* A block is aligned to its own size and lies inside the managed range. */
-	for (unsigned order = 0; order < MAX_ORDER; ++order) {
+	for (unsigned order = 0; order < MAX_ORDER; order++) {
 		struct page *block = alloc_pages(order);
 
 		if (!block) {
@@ -50,10 +50,10 @@ int main(void)
 
 	/* Mixed orders held at the same time never overlap. */
 	static const unsigned orders[] = {0, 3, 1, 2, 0, 4};
-	for (unsigned index = 0; index < 6; ++index) {
+	for (unsigned index = 0; index < 6; index++) {
 		held[index] = alloc_pages(orders[index]);
 		assert(held[index]);
-		for (unsigned other = 0; other < index; ++other) {
+		for (unsigned other = 0; other < index; other++) {
 			uintptr_t mine = page_to_phys(held[index]);
 			uintptr_t theirs = page_to_phys(held[other]);
 
@@ -61,7 +61,7 @@ int main(void)
 			       theirs + (PAGE_SIZE << orders[other]) <= mine);
 		}
 	}
-	for (unsigned index = 0; index < 6; ++index) {
+	for (unsigned index = 0; index < 6; index++) {
 		__free_pages(held[index], orders[index]);
 	}
 	assert(nr_free_pages() == PAGES);
@@ -73,7 +73,7 @@ int main(void)
 	assert(count == PAGES);
 	assert(nr_free_pages() == 0);
 	assert(!alloc_pages(0));
-	for (unsigned index = 0; index < count; ++index) {
+	for (unsigned index = 0; index < count; index++) {
 		__free_pages(held[index], 0);
 	}
 	assert(nr_free_pages() == PAGES);

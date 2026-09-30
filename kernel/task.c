@@ -7,8 +7,7 @@
 #include "kernel.h"
 #include "task.h"
 
-extern const unsigned char app0_start[], app0_end[], app1_start[], app1_end[], app2_start[],
-	app2_end[];
+extern const unsigned char app0_start[], app0_end[], app1_start[], app1_end[], app2_start[], app2_end[];
 
 static struct task_struct tasks[APP_COUNT];
 static unsigned current;
@@ -57,8 +56,8 @@ static long sys_log(struct task_struct *task, uintptr_t pointer, size_t length)
 		return -EFAULT;
 	}
 	task_prefix();
-	for (size_t index = 0; index < length; ++index) {
-		uart_putc(((const char *)pointer)[index]);
+	for (size_t i = 0; i < length; i++) {
+		uart_putc(((const char *)pointer)[i]);
 	}
 	return (long)length;
 }
@@ -66,14 +65,14 @@ static long sys_log(struct task_struct *task, uintptr_t pointer, size_t length)
 struct pt_regs *trap(struct pt_regs *regs, uint64_t irq)
 {
 	struct task_struct *task = &tasks[current];
-	if ((regs->pstate & 0x1f) || !(read_sysreg(daif) & 0x80) ||
-	    regs->sp < task->stack_bottom || regs->sp > task->stack_top || (regs->sp & 15)) {
+	if ((regs->pstate & 0x1f) || !(read_sysreg(daif) & 0x80) || regs->sp < task->stack_bottom ||
+	    regs->sp > task->stack_top || (regs->sp & 15)) {
 		kernel_panic();
 	}
 	task->regs = *regs;
 	if (!task->observed) {
-		printk("[app %u] TRAP origin=%016lx handler=%016lx\n", current,
-		       regs->pstate & 0x1f, read_sysreg(CurrentEL) >> 2);
+		printk("[app %u] TRAP origin=%016lx handler=%016lx\n", current, regs->pstate & 0x1f,
+		       read_sysreg(CurrentEL) >> 2);
 		task->observed = true;
 	}
 	if (irq) {
@@ -108,23 +107,22 @@ struct pt_regs *trap(struct pt_regs *regs, uint64_t irq)
 {
 	const unsigned char *starts[] = {app0_start, app1_start, app2_start};
 	const unsigned char *ends[] = {app0_end, app1_end, app2_end};
-	for (unsigned index = 0; index < APP_COUNT; ++index) {
-		struct task_struct *task = &tasks[index];
-		task->image = APP_FIRST + index * APP_SLOT_SIZE;
-		task->size = (uintptr_t)ends[index] - (uintptr_t)starts[index];
+	for (unsigned i = 0; i < APP_COUNT; i++) {
+		struct task_struct *task = &tasks[i];
+		task->image = APP_FIRST + i * APP_SLOT_SIZE;
+		task->size = (uintptr_t)ends[i] - (uintptr_t)starts[i];
 		task->stack_top = task->image + APP_SLOT_SIZE;
 		task->stack_bottom = task->stack_top - APP_STACK_SIZE;
-		if (!task->size || task->size > APP_IMAGE_SIZE ||
-		    task->image + task->size > task->stack_bottom) {
+		if (!task->size || task->size > APP_IMAGE_SIZE || task->image + task->size > task->stack_bottom) {
 			kernel_panic();
 		}
 		/* The compatibility mapping makes the slot's user address its physical address. */
 		volatile unsigned char *destination = __va(task->image);
-		for (size_t offset = 0; offset < task->size; ++offset) {
-			destination[offset] = starts[index][offset];
+		for (size_t offset = 0; offset < task->size; offset++) {
+			destination[offset] = starts[i][offset];
 		}
-		for (size_t offset = 0; offset < task->size; ++offset) {
-			if (destination[offset] != starts[index][offset]) {
+		for (size_t offset = 0; offset < task->size; offset++) {
+			if (destination[offset] != starts[i][offset]) {
 				kernel_panic();
 			}
 		}
@@ -133,8 +131,7 @@ struct pt_regs *trap(struct pt_regs *regs, uint64_t irq)
 		task->regs.sp = task->stack_top;
 		task->regs.pstate = 0x340;
 		task->runnable = true;
-		printk("LOADED app=%u image=%016lx stack=%016lx copy=OK\n", index, task->image,
-		       task->stack_top);
+		printk("LOADED app=%u image=%016lx stack=%016lx copy=OK\n", i, task->image, task->stack_top);
 	}
 	__asm__ volatile("dsb sy\n\tisb" : : : "memory");
 	timer_init();

@@ -23,7 +23,7 @@ struct task_struct {
 
 static inline int next_runnable(const struct task_struct tasks[APP_COUNT], unsigned current)
 {
-	for (unsigned offset = 1; offset <= APP_COUNT; ++offset) {
+	for (unsigned offset = 1; offset <= APP_COUNT; offset++) {
 		unsigned next = (current + offset) % APP_COUNT;
 		if (tasks[next].runnable) {
 			return (int)next;

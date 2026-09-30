@@ -9,21 +9,21 @@
 
 int main(void)
 {
-	for (unsigned mask = 0; mask < 8; ++mask) {
+	for (unsigned mask = 0; mask < 8; mask++) {
 		struct task_struct tasks[APP_COUNT] = {};
 		unsigned ordered[APP_COUNT];
 		unsigned count = 0;
-		for (unsigned index = 0; index < APP_COUNT; ++index) {
-			tasks[index].runnable = (mask & (1u << index)) != 0;
-			if (tasks[index].runnable) {
-				ordered[count++] = index;
+		for (unsigned i = 0; i < APP_COUNT; i++) {
+			tasks[i].runnable = (mask & (1u << i)) != 0;
+			if (tasks[i].runnable) {
+				ordered[count++] = i;
 			}
 		}
-		for (unsigned current = 0; current < APP_COUNT; ++current) {
+		for (unsigned current = 0; current < APP_COUNT; current++) {
 			int expected = count ? (int)ordered[0] : -1;
-			for (unsigned index = 0; index < count; ++index) {
-				if (ordered[index] > current) {
-					expected = (int)ordered[index];
+			for (unsigned i = 0; i < count; i++) {
+				if (ordered[i] > current) {
+					expected = (int)ordered[i];
 					break;
 				}
 			}

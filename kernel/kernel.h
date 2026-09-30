@@ -18,14 +18,13 @@
 #error "The kernel requires C23"
 #endif
 
-#define read_sysreg(r)                                                                             \
-	({                                                                                         \
-		uint64_t __val;                                                                    \
-		__asm__ volatile("mrs %0, " #r : "=r"(__val));                                     \
-		__val;                                                                             \
+#define read_sysreg(r)                                                                                                 \
+	({                                                                                                             \
+		uint64_t __val;                                                                                        \
+		__asm__ volatile("mrs %0, " #r : "=r"(__val));                                                         \
+		__val;                                                                                                 \
 	})
-#define write_sysreg(v, r)                                                                         \
-	__asm__ volatile("msr " #r ", %0" : : "r"((uint64_t)(v)) : "memory")
+#define write_sysreg(v, r) __asm__ volatile("msr " #r ", %0" : : "r"((uint64_t)(v)) : "memory")
 
 extern const char _text[];
 extern const char _end[];

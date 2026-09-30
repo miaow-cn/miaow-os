@@ -35,24 +35,24 @@ int main(void)
 	assert(!kmalloc(0));
 	kfree(nullptr);
 
-	for (unsigned index = 0; index < COUNT; ++index) {
-		objects[index] = kmalloc(sizes[index]);
-		assert(objects[index]);
-		assert(!((uintptr_t)objects[index] % KMALLOC_MIN_SIZE));
+	for (unsigned i = 0; i < COUNT; i++) {
+		objects[i] = kmalloc(sizes[i]);
+		assert(objects[i]);
+		assert(!((uintptr_t)objects[i] % KMALLOC_MIN_SIZE));
 		/* Requests beyond the largest size class come from whole pages. */
-		if (sizes[index] > KMALLOC_MAX_SIZE) {
-			assert(!((uintptr_t)objects[index] % PAGE_SIZE));
+		if (sizes[i] > KMALLOC_MAX_SIZE) {
+			assert(!((uintptr_t)objects[i] % PAGE_SIZE));
 		}
-		memset(objects[index], (int)index + 1, sizes[index]);
+		memset(objects[i], (int)i + 1, sizes[i]);
 	}
-	for (unsigned index = 0; index < COUNT; ++index) {
-		const unsigned char *bytes = objects[index];
+	for (unsigned i = 0; i < COUNT; i++) {
+		const unsigned char *bytes = objects[i];
 
-		assert(bytes[0] == index + 1);
-		assert(bytes[sizes[index] - 1] == index + 1);
+		assert(bytes[0] == i + 1);
+		assert(bytes[sizes[i] - 1] == i + 1);
 	}
-	for (unsigned index = 0; index < COUNT; ++index) {
-		kfree(objects[index]);
+	for (unsigned i = 0; i < COUNT; i++) {
+		kfree(objects[i]);
 	}
 	assert(nr_free_pages() == available);
 
@@ -68,16 +68,16 @@ int main(void)
 	void **batch = calloc(objects_per_page, sizeof(*batch));
 
 	assert(batch);
-	for (unsigned index = 0; index < objects_per_page; ++index) {
-		batch[index] = kmalloc(KMALLOC_MIN_SIZE);
-		assert(batch[index]);
-		for (unsigned other = 0; other < index; ++other) {
-			assert(batch[index] != batch[other]);
+	for (unsigned i = 0; i < objects_per_page; i++) {
+		batch[i] = kmalloc(KMALLOC_MIN_SIZE);
+		assert(batch[i]);
+		for (unsigned other = 0; other < i; other++) {
+			assert(batch[i] != batch[other]);
 		}
 	}
 	assert(nr_free_pages() == available - 1);
-	for (unsigned index = 0; index < objects_per_page; ++index) {
-		kfree(batch[index]);
+	for (unsigned i = 0; i < objects_per_page; i++) {
+		kfree(batch[i]);
 	}
 	assert(nr_free_pages() == available);
 	free(batch);
@@ -85,7 +85,7 @@ int main(void)
 	void *zeroed = kzalloc(200);
 
 	assert(zeroed);
-	for (unsigned offset = 0; offset < 200; ++offset) {
+	for (unsigned offset = 0; offset < 200; offset++) {
 		assert(((const unsigned char *)zeroed)[offset] == 0);
 	}
 	kfree(zeroed);

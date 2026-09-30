@@ -79,8 +79,8 @@ int main(void)
 
 	/* The fixed region array refuses to overflow. */
 	reset();
-	for (unsigned index = 0; index < INIT_MEMBLOCK_REGIONS; ++index) {
-		assert(memblock_add(index * 0x2000, 0x1000) == 0);
+	for (unsigned i = 0; i < INIT_MEMBLOCK_REGIONS; i++) {
+		assert(memblock_add(i * 0x2000, 0x1000) == 0);
 	}
 	assert(memblock.memory.cnt == INIT_MEMBLOCK_REGIONS);
 	assert(memblock_add(INIT_MEMBLOCK_REGIONS * 0x2000, 0x1000) == -1);

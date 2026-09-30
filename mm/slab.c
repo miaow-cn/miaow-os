@@ -30,7 +30,7 @@ static struct kmem_cache kmalloc_caches[KMALLOC_CACHES];
  */
 void kmem_cache_init(void)
 {
-	for (unsigned index = 0; index < KMALLOC_CACHES; ++index) {
+	for (unsigned index = 0; index < KMALLOC_CACHES; index++) {
 		struct kmem_cache *cache = &kmalloc_caches[index];
 
 		cache->size = KMALLOC_MIN_SIZE << index;
@@ -86,10 +86,9 @@ static struct page *new_slab(struct kmem_cache *cache)
 
 	start = page_address(page);
 	last = start;
-	for (char *object = start + cache->size; object < start + cache->objects * cache->size;
-	     object += cache->size) {
-		set_freepointer(last, object);
-		last = object;
+	for (char *obj = start + cache->size; obj < start + cache->objects * cache->size; obj += cache->size) {
+		set_freepointer(last, obj);
+		last = obj;
 	}
 	set_freepointer(last, nullptr);
 	page->freelist = start;

@@ -30,8 +30,7 @@ static inline void INIT_LIST_HEAD(struct list_head *list)
 	list->prev = list;
 }
 
-static inline void __list_add(struct list_head *entry, struct list_head *prev,
-			      struct list_head *next)
+static inline void __list_add(struct list_head *entry, struct list_head *prev, struct list_head *next)
 {
 	next->prev = entry;
 	entry->next = next;
@@ -64,11 +63,10 @@ static inline int list_empty(const struct list_head *head)
 
 #define list_entry(pointer, type, member)    container_of(pointer, type, member)
 #define list_first_entry(head, type, member) list_entry((head)->next, type, member)
-#define list_next_entry(position, member)                                                          \
-	list_entry((position)->member.next, typeof(*(position)), member)
+#define list_next_entry(position, member)    list_entry((position)->member.next, typeof(*(position)), member)
 
-#define list_for_each_entry(position, head, member)                                                \
-	for (position = list_first_entry(head, typeof(*position), member);                         \
-	     &position->member != (head); position = list_next_entry(position, member))
+#define list_for_each_entry(position, head, member)                                                                    \
+	for (position = list_first_entry(head, typeof(*position), member); &position->member != (head);                \
+	     position = list_next_entry(position, member))
 
 #endif /* _LIST_H */

@@ -18,7 +18,8 @@ static int order(struct list_head *head, int *values)
 	struct node *node;
 	int count = 0;
 
-	list_for_each_entry(node, head, list) {
+	list_for_each_entry(node, head, list)
+	{
 		values[count++] = node->value;
 	}
 	return count;
@@ -51,8 +52,8 @@ int main(void)
 	assert(order(&head, values) == 4);
 	assert(values[3] == 0);
 
-	for (unsigned index = 0; index < 4; ++index) {
-		list_del(&nodes[index].list);
+	for (unsigned i = 0; i < 4; i++) {
+		list_del(&nodes[i].list);
 	}
 	assert(list_empty(&head));
 	assert(order(&head, values) == 0);

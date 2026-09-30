@@ -97,7 +97,7 @@ void free_area_init(uintptr_t base, unsigned long pages, struct page *map)
 	max_mapnr = pages;
 	free_count = 0;
 	memset(map, 0, pages * sizeof(*map));
-	for (unsigned order = 0; order < MAX_ORDER; ++order) {
+	for (unsigned order = 0; order < MAX_ORDER; order++) {
 		INIT_LIST_HEAD(&free_area[order].free_list);
 		free_area[order].nr_free = 0;
 	}
@@ -181,7 +181,7 @@ struct page *alloc_pages(unsigned order)
 	if (order >= MAX_ORDER) {
 		return nullptr;
 	}
-	for (unsigned current = order; current < MAX_ORDER; ++current) {
+	for (unsigned current = order; current < MAX_ORDER; current++) {
 		struct page *page;
 
 		if (list_empty(&free_area[current].free_list)) {

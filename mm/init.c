@@ -60,8 +60,8 @@ void mem_init(void)
 
 	printk("phy: %016lx-%016lx map: %016lx dtb: %016lx\n", (uintptr_t)PHYS_OFFSET,
 	       (uintptr_t)PHYS_OFFSET + RAM_SIZE, map, __fdt_pointer);
-	for (unsigned index = 0; index < memblock.reserved.cnt; ++index) {
-		struct memblock_region *region = &memblock.reserved.regions[index];
+	for (unsigned i = 0; i < memblock.reserved.cnt; i++) {
+		struct memblock_region *region = &memblock.reserved.regions[i];
 
 		printk("resv: %016lx-%016lx\n", region->base, region->base + region->size);
 	}

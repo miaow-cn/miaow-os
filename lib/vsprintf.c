@@ -73,8 +73,7 @@ unsigned long simple_strtoul(const char *cp, char **endp, unsigned int base)
 			}
 		}
 	}
-	while (isxdigit(*cp) &&
-	       (value = isdigit(*cp) ? *cp - '0' : toupper(*cp) - 'A' + 10) < base) {
+	while (isxdigit(*cp) && (value = isdigit(*cp) ? *cp - '0' : toupper(*cp) - 'A' + 10) < base) {
 		result = result * base + value;
 		cp++;
 	}
@@ -120,8 +119,7 @@ unsigned long long simple_strtoull(const char *cp, char **endp, unsigned int bas
 		}
 	}
 	while (isxdigit(*cp) &&
-	       (value = isdigit(*cp) ? *cp - '0' : (islower(*cp) ? toupper(*cp) : *cp) - 'A' + 10) <
-		       base) {
+	       (value = isdigit(*cp) ? *cp - '0' : (islower(*cp) ? toupper(*cp) : *cp) - 'A' + 10) < base) {
 		result = result * base + value;
 		cp++;
 	}
@@ -163,8 +161,7 @@ static int skip_atoi(const char **s)
 #define SPECIAL 32 /* 0x */
 #define LARGE   64 /* use 'ABCDEF' instead of 'abcdef' */
 
-static char *number(char *buf, char *end, long long num, int base, int size, int precision,
-		    int type)
+static char *number(char *buf, char *end, long long num, int base, int size, int precision, int type)
 {
 	char c, sign, tmp[66];
 	const char *digits;
@@ -310,7 +307,7 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
 		size = end - buf + 1;
 	}
 
-	for (; *fmt; ++fmt) {
+	for (; *fmt; fmt++) {
 		if (*fmt != '%') {
 			if (str <= end) {
 				*str = *fmt;
@@ -420,7 +417,7 @@ repeat:
 					++str;
 				}
 			}
-			for (i = 0; i < len; ++i) {
+			for (i = 0; i < len; i++) {
 				if (str <= end) {
 					*str = *s;
 				}
@@ -440,8 +437,7 @@ repeat:
 				field_width = 2 * sizeof(void *);
 				flags |= ZEROPAD;
 			}
-			str = number(str, end, (unsigned long)va_arg(args, void *), 16, field_width,
-				     precision, flags);
+			str = number(str, end, (unsigned long)va_arg(args, void *), 16, field_width, precision, flags);
 			continue;
 
 		case 'n':

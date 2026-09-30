@@ -78,9 +78,9 @@ int memcmp(const void *left, const void *right, size_t size)
 	const unsigned char *first = left;
 	const unsigned char *second = right;
 
-	for (size_t index = 0; index < size; ++index) {
-		if (first[index] != second[index]) {
-			return (int)first[index] - (int)second[index];
+	for (size_t i = 0; i < size; i++) {
+		if (first[i] != second[i]) {
+			return (int)first[i] - (int)second[i];
 		}
 	}
 	return 0;

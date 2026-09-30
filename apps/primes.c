@@ -10,9 +10,9 @@ int app_main(void)
 {
 	unsigned count = 0;
 	log_text("primes start\n");
-	for (unsigned candidate = 2; candidate <= 100000; ++candidate) {
+	for (unsigned candidate = 2; candidate <= 100000; candidate++) {
 		bool prime = true;
-		for (unsigned divisor = 2; divisor * divisor <= candidate; ++divisor) {
+		for (unsigned divisor = 2; divisor * divisor <= candidate; divisor++) {
 			if (candidate % divisor == 0) {
 				prime = false;
 				break;

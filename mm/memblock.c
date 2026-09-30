@@ -36,8 +36,7 @@ static size_t cap_size(uintptr_t base, size_t size)
  * @param base Base address of the new region.
  * @param size Size of the new region.
  */
-static void memblock_insert_region(struct memblock_type *type, unsigned index, uintptr_t base,
-				   size_t size)
+static void memblock_insert_region(struct memblock_type *type, unsigned index, uintptr_t base, size_t size)
 {
 	struct memblock_region *region = &type->regions[index];
 
@@ -132,7 +131,7 @@ repeat:
 	base = original_base;
 	added = 0;
 
-	for (index = 0; index < type->cnt; ++index) {
+	for (index = 0; index < type->cnt; index++) {
 		struct memblock_region *region = &type->regions[index];
 		uintptr_t region_base = region->base;
 		uintptr_t region_end = region_base + region->size;
@@ -193,8 +192,8 @@ repeat:
  * @retval 0   Success.
  * @retval -1  Region array overflow.
  */
-static int memblock_isolate_range(struct memblock_type *type, uintptr_t base, size_t size,
-				  unsigned *start_rgn, unsigned *end_rgn)
+static int memblock_isolate_range(struct memblock_type *type, uintptr_t base, size_t size, unsigned *start_rgn,
+				  unsigned *end_rgn)
 {
 	uintptr_t end = base + cap_size(base, size);
 
@@ -208,7 +207,7 @@ static int memblock_isolate_range(struct memblock_type *type, uintptr_t base, si
 		return -1;
 	}
 
-	for (unsigned index = 0; index < type->cnt; ++index) {
+	for (unsigned index = 0; index < type->cnt; index++) {
 		struct memblock_region *region = &type->regions[index];
 		uintptr_t region_base = region->base;
 		uintptr_t region_end = region_base + region->size;
@@ -315,20 +314,16 @@ int memblock_phys_free(uintptr_t base, size_t size)
  */
 bool memblock_next_free(struct memblock_cursor *cursor, uintptr_t *start, uintptr_t *end)
 {
-	for (; cursor->memory < memblock.memory.cnt; ++cursor->memory) {
+	for (; cursor->memory < memblock.memory.cnt; cursor->memory++) {
 		struct memblock_region *area = &memblock.memory.regions[cursor->memory];
 		uintptr_t area_start = area->base;
 		uintptr_t area_end = area->base + area->size;
 
 		/* Index cnt addresses the gap that follows the last reserved region. */
-		for (; cursor->reserved < memblock.reserved.cnt + 1; ++cursor->reserved) {
-			struct memblock_region *taken =
-				&memblock.reserved.regions[cursor->reserved];
-			uintptr_t gap_start =
-				cursor->reserved ? taken[-1].base + taken[-1].size : 0;
-			uintptr_t gap_end = cursor->reserved < memblock.reserved.cnt
-						    ? taken->base
-						    : UINTPTR_MAX;
+		for (; cursor->reserved < memblock.reserved.cnt + 1; cursor->reserved++) {
+			struct memblock_region *taken = &memblock.reserved.regions[cursor->reserved];
+			uintptr_t gap_start = cursor->reserved ? taken[-1].base + taken[-1].size : 0;
+			uintptr_t gap_end = cursor->reserved < memblock.reserved.cnt ? taken->base : UINTPTR_MAX;
 
 			if (gap_start >= area_end) {
 				break;
@@ -338,9 +333,9 @@ bool memblock_next_free(struct memblock_cursor *cursor, uintptr_t *start, uintpt
 				*end = area_end < gap_end ? area_end : gap_end;
 				/* Advance whichever range ends first. */
 				if (area_end <= gap_end) {
-					++cursor->memory;
+					cursor->memory++;
 				} else {
-					++cursor->reserved;
+					cursor->reserved++;
 				}
 				return true;
 			}
