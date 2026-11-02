@@ -15,7 +15,8 @@ uintptr_t __fdt_pointer;
 [[noreturn]] void kernel_panic(void)
 {
 	__asm__ volatile("msr daifset, #15");
-	printk("PANIC EL1 ESR=%016lx ELR=%016lx\n", read_sysreg(esr_el1), read_sysreg(elr_el1));
+	printk("PANIC EL1 ESR=%016lx FAR=%016lx ELR=%016lx\n", read_sysreg(esr_el1), read_sysreg(far_el1),
+	       read_sysreg(elr_el1));
 	for (;;) {
 		__asm__ volatile("wfi");
 	}

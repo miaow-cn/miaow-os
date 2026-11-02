@@ -83,7 +83,8 @@ struct pt_regs *trap(struct pt_regs *regs, uint64_t irq)
 	}
 	uint64_t syndrome = read_sysreg(esr_el1);
 	if ((syndrome >> 26) != 0x15 || (syndrome & 0xffff)) {
-		printk("[app %u] FAULT ESR=%016lx ELR=%016lx\n", current, syndrome, regs->pc);
+		printk("[app %u] FAULT ESR=%016lx FAR=%016lx ELR=%016lx\n", current, syndrome, read_sysreg(far_el1),
+		       regs->pc);
 		task->runnable = false;
 		return schedule();
 	}

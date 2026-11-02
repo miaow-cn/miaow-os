@@ -27,6 +27,9 @@
 #define write_sysreg(v, r) __asm__ volatile("msr " #r ", %0" : : "r"((uint64_t)(v)) : "memory")
 
 extern const char _text[];
+extern const char _etext[];
+extern const char __start_rodata[];
+extern const char __end_rodata[];
 extern const char _end[];
 extern uintptr_t __fdt_pointer;
 

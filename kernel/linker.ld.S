@@ -10,7 +10,8 @@
 ENTRY(_start)
 PHDRS
 {
-	code PT_LOAD FLAGS(5);
+	text PT_LOAD FLAGS(5);
+	rodata PT_LOAD FLAGS(4);
 	data PT_LOAD FLAGS(6);
 }
 SECTIONS
@@ -18,9 +19,14 @@ SECTIONS
 	/* Linked in the linear map, loaded at the physical address QEMU uses for raw images. */
 	. = PAGE_OFFSET + TEXT_OFFSET;
 	_text = .;
-	.text : AT(PHYS_OFFSET + TEXT_OFFSET) { KEEP(*(.text.boot)) *(.text .text.*) } :code
-	.rodata : { *(.rodata .rodata.*) } :code
-	. = ALIGN(4096);
+	.text : AT(PHYS_OFFSET + TEXT_OFFSET) { KEEP(*(.text.boot)) *(.text .text.*) } :text
+	/* Page permissions change at each segment boundary. */
+	. = ALIGN(PAGE_SIZE);
+	_etext = .;
+	__start_rodata = .;
+	.rodata : { *(.rodata .rodata.*) } :rodata
+	. = ALIGN(PAGE_SIZE);
+	__end_rodata = .;
 	.data : { *(.data .data.*) } :data
 	.bss (NOLOAD) : {
 		. = ALIGN(16);

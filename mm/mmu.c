@@ -7,19 +7,25 @@
 #include "kernel.h"
 #include "abi.h"
 
+typedef uint64_t pgd_t;
+typedef uint64_t pmd_t;
+typedef uint64_t pte_t;
+typedef uint64_t pgprot_t;
+
 #define PTRS_PER_PGD     512
 #define PTRS_PER_PMD     512
 #define PTRS_PER_PTE     512
 #define PGDIR_SHIFT      30
 #define PMD_SHIFT        21
-#define RAM_TABLES       (RAM_SIZE >> PMD_SHIFT)
 #define pgd_index(addr)  (((uintptr_t)(addr) >> PGDIR_SHIFT) & (PTRS_PER_PGD - 1))
 #define pmd_index(addr)  (((uintptr_t)(addr) >> PMD_SHIFT) & (PTRS_PER_PMD - 1))
 #define pte_index(addr)  (((uintptr_t)(addr) >> PAGE_SHIFT) & (PTRS_PER_PTE - 1))
+#define PTE_ADDR_MASK    0x0000fffffffff000UL
 #define PMD_TYPE_TABLE   3UL
 #define PTE_TYPE_PAGE    3UL
 #define PTE_ATTRINDX(t)  ((uint64_t)(t) << 2)
-#define PTE_USER         (1UL << 6)
+#define PTE_USER         (1UL << 6) /* AP[1] */
+#define PTE_RDONLY       (1UL << 7) /* AP[2] */
 #define PTE_SHARED       (3UL << 8)
 #define PTE_AF           (1UL << 10)
 #define PTE_PXN          (1UL << 53)
@@ -27,6 +33,21 @@
 #define MT_DEVICE_nGnRnE 0
 #define MT_NORMAL_NC     1
 #define MAIR(attr, mt)   ((uint64_t)(attr) << ((mt) * 8))
+
+/* Linux's arm64 protections without nG, DBM and software bits; RAM stays non-cacheable for now. */
+#define PROT_DEFAULT       (PTE_TYPE_PAGE | PTE_AF | PTE_SHARED)
+#define PROT_DEVICE_nGnRnE (PROT_DEFAULT | PTE_PXN | PTE_UXN | PTE_ATTRINDX(MT_DEVICE_nGnRnE))
+#define PROT_NORMAL_NC     (PROT_DEFAULT | PTE_PXN | PTE_UXN | PTE_ATTRINDX(MT_NORMAL_NC))
+#define _PAGE_DEFAULT      (PROT_DEFAULT | PTE_ATTRINDX(MT_NORMAL_NC))
+
+#define PAGE_KERNEL        PROT_NORMAL_NC
+#define PAGE_KERNEL_RO     (PAGE_KERNEL | PTE_RDONLY)
+#define PAGE_KERNEL_ROX    ((PAGE_KERNEL & ~PTE_PXN) | PTE_RDONLY)
+#define PAGE_SHARED        (_PAGE_DEFAULT | PTE_USER | PTE_PXN | PTE_UXN)
+#define PAGE_READONLY_EXEC (_PAGE_DEFAULT | PTE_USER | PTE_RDONLY | PTE_PXN)
+
+/* L2 and L3 tables: IO (1 + 2), linear map (1 + one per 2 MiB of RAM), app slots (1 + 1). */
+#define EARLY_PGTABLES (6 + (RAM_SIZE >> PMD_SHIFT))
 
 /* clang-format off */
 
@@ -44,38 +65,35 @@
  * TTBR1; any other value in bits 63:39 lies outside both ranges and faults with a
  * level 0 Translation fault without walking any table.
  *
- * TTBR1, kernel only (EL0 ---):
+ * TTBR1 (swapper_pg_dir), kernel only (EL0 ---):
  * +----------------------------------------+------------------------+------------+---------+---------------+
  * | VA                                     | PA                     | Use        | EL1 RWX | Attribute     |
  * +----------------------------------------+------------------------+------------+---------+---------------+
  * | 0xffffff8008000000..0xffffff800800ffff | 0x08000000..0x0800ffff | GICD       |   rw-   | nGnRnE        |
  * | 0xffffff80080a0000..0xffffff80080bffff | 0x080a0000..0x080bffff | GICR + SGI |   rw-   | nGnRnE        |
  * | 0xffffff8009000000..0xffffff8009000fff | 0x09000000..0x09000fff | PL011      |   rw-   | nGnRnE        |
- * | 0xffffffc000000000..0xffffffc007ffffff | 0x40000000..0x47ffffff | pmd_ram map |   rwx   | in, out+in nc |
- * |   0xffffffc000080000..                 |   0x40080000..         |   kernel   |         |               |
+ * | 0xffffffc000000000..0xffffffc007ffffff | 0x40000000..0x47ffffff | linear map |   rw-   | in, out+in nc |
+ * |   _text.._etext                        |   0x40080000..         |   text     |   r-x   |               |
+ * |   __start_rodata..__end_rodata         |                        |   rodata   |   r--   |               |
  * +----------------------------------------+------------------------+------------+---------+---------------+
  *
- * TTBR0, VA = PA:
- * +----------------------------------------+------------------------+------------+---------+---------+
- * | VA                                     | PA                     | Use        | EL0 RWX | EL1 RWX |
- * +----------------------------------------+------------------------+------------+---------+---------+
- * | 0x41000000..0x4105ffff                 | 0x41000000..0x4105ffff | apps       |   rwx   |   rw-   |
- * | 2 MiB slots holding the kernel image   | same                   | boot only  |   ---   |   rwx   |
- * +----------------------------------------+------------------------+------------+---------+---------+
+ * TTBR0 (user_pg_dir), VA = PA, one mapping shared by all apps, n = 0..2:
+ * +----------------------------------------+------------+---------+---------+
+ * | VA                                     | Use        | EL0 RWX | EL1 RWX |
+ * +----------------------------------------+------------+---------+---------+
+ * | 0x41000000 + n * 0x20000, 64 KiB       | app image  |   r-x   |   r--   |
+ * | 0x4101c000 + n * 0x20000, 16 KiB       | app stack  |   rw-   |   rw-   |
+ * +----------------------------------------+------------+---------+---------+
+ * The 48 KiB between image and stack stays unmapped as a guard.
  *
- * Tables, [index]:
- *   TTBR1 swapper_pg_dir[0]   -> pmd_io[64] -> pte_gic[0..15], pte_gic[160..191]
- *                                pmd_io[72] -> pte_uart[0]
- *         swapper_pg_dir[256] -> pmd_ram[0..63] -> pte_ram[0..63][0..511]
- *   TTBR0 user_pd_dir[1]        -> pmd_user[8] -> pte_user[0..95]
- *                                pmd_user[0..] -> pte_ram[0..]: identity map, borrowed from the
- *                                linear map and cleared by cpu_uninstall_idmap() before
- *                                start_kernel
+ * While the MMU is being enabled, TTBR0 holds idmap_pg_dir instead. Its only entry is the
+ * linear map's L1 entry, placed at the index of PHYS_OFFSET: PAGE_OFFSET and PHYS_OFFSET
+ * are 1 GiB aligned, so the same L2 and L3 tables translate all of RAM to itself.
+ * cpu_uninstall_idmap() then installs user_pg_dir.
  *
- * PAGE_OFFSET, IO_OFFSET and PHYS_OFFSET are 1 GiB aligned, so an address has the same L2
- *     and L3 index physically and in its high mapping.
- * RWX: r/w/x granted, '-' denied. App pages are writable at EL0, which makes them
- *     execute-never at EL1 whatever PXN says.
+ * The linear map is the only mapping of kernel text and read-only data, so restricting
+ * those segments there leaves no writable alias.
+ * RWX: r/w/x granted, '-' denied.
  * Share: non/in/out = Non-shareable / Inner Shareable / Outer Shareable. SH is ignored for
  *     Device and for Normal Inner+Outer Non-cacheable memory: both are always Outer
  *     Shareable, so "in" only records what the RAM descriptors request.
@@ -87,146 +105,141 @@
 
 /* clang-format on */
 
-static alignas(PAGE_SIZE) struct {
-	uint64_t swapper_pg_dir[PTRS_PER_PGD];      /* TTBR1 L1: kernel mappings */
-	uint64_t pmd_io[PTRS_PER_PMD];              /* L2 under IO_OFFSET: GIC and UART */
-	uint64_t pmd_ram[PTRS_PER_PMD];             /* L2 under PAGE_OFFSET: all of RAM */
-	uint64_t pte_gic[PTRS_PER_PTE];             /* L3: GICD, GICR + SGI pages */
-	uint64_t pte_uart[PTRS_PER_PTE];            /* L3: PL011 page */
-	uint64_t pte_ram[RAM_TABLES][PTRS_PER_PTE]; /* L3: linear map, one table per 2 MiB of RAM */
-	uint64_t user_pg_dir[PTRS_PER_PGD];         /* TTBR0 L1: user mappings */
-	uint64_t pmd_user[PTRS_PER_PMD];            /* L2: apps plus the boot-time identity map */
-	uint64_t pte_user[PTRS_PER_PTE];            /* L3: application slots */
-} boot_tables;
+static alignas(PAGE_SIZE) pgd_t swapper_pg_dir[PTRS_PER_PGD];
+static alignas(PAGE_SIZE) pgd_t idmap_pg_dir[PTRS_PER_PGD];
+static alignas(PAGE_SIZE) pgd_t user_pg_dir[PTRS_PER_PGD];
+static alignas(PAGE_SIZE) uint64_t early_pgtables[EARLY_PGTABLES][PTRS_PER_PTE];
+static unsigned early_pgtables_used;
 
-static void map_identity(bool present)
+/*
+ * All but cpu_uninstall_idmap() run with the MMU off: PC-relative symbol addresses are
+ * physical, and a table's physical address is also a pointer to it.
+ */
+static uintptr_t early_pgtable_alloc(void)
 {
-	for (uintptr_t i = pmd_index(_text); i <= pmd_index((uintptr_t)_end - 1); i++) {
-		boot_tables.pmd_user[i] = present ? boot_tables.pmd_ram[i] : 0;
+	return (uintptr_t)early_pgtables[early_pgtables_used++];
+}
+
+/* clang-format off */
+/*
+ * Table descriptor (L1/L2 entries, 4KB granule 48-bit OA):
+ *  63    62   61  60    59   58    51 50  48 47          12 11     2 1  0
+ * +-----+-------+-----+-----+--------+------+--------------+--------+----+
+ * |NS   |AP     |UXN  |PXN  |IGNORED | RES0 |next-level    |IGNORED |Type|
+ * |Table|Table  |Table|Table|        |      |PA[47:12]     |        |    |
+ * +-----+-------+-----+-----+--------+------+--------------+--------+----+
+ *
+ * NSTable: only meaningful in Secure state; qemu secure=off, so [63] is ignored.
+ * APTable: Hierarchical control of data access permissions, active because
+ *     TCR_EL1.HPD0 = HPD1 = 0.
+ *     00 - No effect on data access permissions; 01 - Removes UnprivRead and UnprivWrite;
+ *     10 - Removes UnprivWrite and PrivWrite; 11 - Removes UnprivRead, UnprivWrite, and
+ *     PrivWrite.
+ * UXNTable: Hierarchical control of the EL0 execute-never permission.
+ * PXNTable: Hierarchical control of the EL1 execute-never permission.
+ * next-level PA: The PA the next level table locates at. mmu_init() configures TCR_EL1.IPS
+ *     to 32-bit PA, PA[47:32] must be 0. Type: 0b11 for table descriptor
+ *
+ * Table descriptors leave all hierarchical controls at 0: permissions come from pages only.
+ */
+/* clang-format on */
+static pte_t *walk_to_pte(pgd_t *pgdir, uintptr_t addr)
+{
+	pgd_t *pgdp = pgdir + pgd_index(addr);
+	if (!*pgdp) {
+		*pgdp = early_pgtable_alloc() | PMD_TYPE_TABLE;
+	}
+	pmd_t *pmdp = (pmd_t *)(*pgdp & PTE_ADDR_MASK) + pmd_index(addr);
+	if (!*pmdp) {
+		*pmdp = early_pgtable_alloc() | PMD_TYPE_TABLE;
+	}
+	return (pte_t *)(*pmdp & PTE_ADDR_MASK) + pte_index(addr);
+}
+
+/* clang-format off */
+/*
+ * Page descriptor (L3 entries, 4KB granule 48-bit OA):
+ *  63  62   59 58 55 54  53   52   51  50
+ * +---+-------+-----+---+---+-----+---+--+
+ * |Sw |IGNORED|Sw   |UXN|PXN|Conti|DBM|GP|
+ * |USE|       |USE  |   |   |guous|   |  |
+ * +---+-------+-----+---+---+-----+---+--+
+ *
+ * 49  48 47       12     11 10 9 8 7 6  5   4  2 1  0
+ * +-----+----------+    +--+--+---+---+----+----+----+
+ * |RES0 |page      |    |nG|AF|SH |AP |RES0|Attr|Type|
+ * |     |PA[47:12] |    |  |  |   |   |    |Indx|    |
+ * +-----+----------+    +--+--+---+---+----+----+----+
+ *
+ * Non-secure state, so [63] is reserved for software use.
+ * FEAT_HPDS2 supported (ID_AA64MMFR1_EL1.HPDS=2), but TCR_EL1.HWU0nn = HWU1nn = 0 and
+ *     HPD0 = HPD1 = 0, so no page-based hardware attributes. FEAT_S1POE not supported
+ *     (ID_AA64MMFR3_EL1.S1POE=0), so [62:59] ignored.
+ * qemu virtualization=off, no EL2, no HCR_EL2. FEAT_S1PIE not supported
+ *     (ID_AA64MMFR3_EL1.S1PIE=0), no indirect permissions. so [54:53] is {UXN,PXN},
+ * FEAT_THE not supported (ID_AA64PFR1_EL1.THE=0), [52] is contiguous.
+ * FEAT_HAFDBS supported (ID_AA64MMFR1_EL1.HAFDBS=2), so [51] is Dirty bit modifier (DBM).
+ * FEAT_BTI is supported (ID_AA64PFR1_EL1.BT=1), [50] is Guarded Page (GP).
+ * TCR_ELx.DS=0, [49:48] is RES0.
+ * EL1&0 translation, so [11] is Not global (nG).
+ * 4KB page and TCR_ELx.DS=0, [9:8] is Shareability (SH).
+ * EL1&0 translation and FEAT_S1PIE not supported (ID_AA64MMFR3_EL1.S1PIE=0),
+ *     no indirect permissions, so [7:6] is AP.
+ * EL1&0 and Non-secure state, so [5] is RES0.
+ *
+ *
+ * SW USE: Reserved for software use.
+ * UXN: Unprivileged (EL0) Execute Never.
+ * PXN: Privileged (EL1) Execute Never.
+ * Contiguous: Identifies a descriptor as belonging to a group of adjacent
+ *     translation table entries that point to a contiguous OA range.
+ * DBM: Dirty Bit Modifier; only acts when hardware dirty management is on (TCR_EL1.HD).
+ * GP: Indicates whether the memory region is guarded.
+ * nG: 0 - global entries, no ASID matching;
+ *     1 - non-global entries, ASID matching required.
+ * AF: Access Flag, set once the region has been accessed. With hardware management off,
+ *     an access through a descriptor whose AF is 0 takes an Access flag fault, so
+ *     PROT_DEFAULT presets it.
+ * SH: 00 - non-shareable; 01 - reserved; 10 - outer-shareable; 11 - inner-shareable
+ * AP: 00 - PrivRead, PrivWrite; 01 - PrivRead, PrivWrite, UnprivRead, UnprivWrite;
+ *     10 - PrivRead; 11 - PrivRead, UnprivRead
+ *     AP[2] is PTE_RDONLY and AP[1] is PTE_USER.
+ * AttrIndx: holds the value n used to select the 8-bit field MAIR_ELx.Attr<n>
+ *     that specifies the memory region attributes.
+ * Type: 0b11 for page descriptor
+ */
+/* clang-format on */
+static void create_pgd_mapping(pgd_t *pgdir, uintptr_t phys, uintptr_t virt, size_t size, pgprot_t prot)
+{
+	for (size_t offset = 0; offset < size; offset += PAGE_SIZE) {
+		*walk_to_pte(pgdir, virt + offset) = (phys + offset) | prot;
 	}
 }
 
-static void map_device(uint64_t *table, uintptr_t start, uintptr_t end)
+/* Overwrites the segment's linear map pages, which are its only mapping. */
+static void map_kernel_segment(const char *start, const char *end, pgprot_t prot)
 {
-	for (uintptr_t addr = start; addr < end; addr += PAGE_SIZE) {
-		/*
-		 * Device-nGnRnE, EL1 read/write only, execute-never at EL0 and EL1.
-		 * AF preset because hardware management is off (TCR_EL1.HA=0).
-		 */
-		table[pte_index(addr)] =
-			addr | PTE_TYPE_PAGE | PTE_AF | PTE_ATTRINDX(MT_DEVICE_nGnRnE) | PTE_PXN | PTE_UXN;
-	}
+	create_pgd_mapping(swapper_pg_dir, (uintptr_t)start, (uintptr_t)__va(start), (size_t)(end - start), prot);
 }
 
 void mmu_init(void)
 {
-	/* clang-format off */
-	/*
-	 * Table descriptor (L1/L2 entries, 4KB granule 48-bit OA):
-	 *  63    62   61  60    59   58    51 50  48 47          12 11     2 1  0
-	 * +-----+-------+-----+-----+--------+------+--------------+--------+----+
-	 * |NS   |AP     |UXN  |PXN  |IGNORED | RES0 |next-level    |IGNORED |Type|
-	 * |Table|Table  |Table|Table|        |      |PA[47:12]     |        |    |
-	 * +-----+-------+-----+-----+--------+------+--------------+--------+----+
-	 *
-	 * NSTable: only meaningful in Secure state; qemu secure=off, so [63] is ignored.
-	 * APTable: Hierarchical control of data access permissions, active because
-	 *     TCR_EL1.HPD0 = HPD1 = 0.
-	 *     00 - No effect on data access permissions; 01 - Removes UnprivRead and UnprivWrite;
-	 *     10 - Removes UnprivWrite and PrivWrite; 11 - Removes UnprivRead, UnprivWrite, and
-	 *     PrivWrite.
-	 * UXNTable: Hierarchical control of the EL0 execute-never permission.
-	 * PXNTable: Hierarchical control of the EL1 execute-never permission.
-	 * next-level PA: The PA the next level table locates at. mmu_init() configures TCR_EL1.IPS
-	 *     to 32-bit PA, PA[47:32] must be 0. Type: 0b11 for table descriptor
-	 */
-	/* clang-format on */
-	/* Runs with the MMU off: PC-relative symbol addresses here are physical. */
-	boot_tables.swapper_pg_dir[pgd_index(IO_OFFSET)] = (uintptr_t)boot_tables.pmd_io | PMD_TYPE_TABLE;
-	boot_tables.swapper_pg_dir[pgd_index(PAGE_OFFSET)] = (uintptr_t)boot_tables.pmd_ram | PMD_TYPE_TABLE;
-	boot_tables.pmd_io[pmd_index(0x08000000)] = (uintptr_t)boot_tables.pte_gic | PMD_TYPE_TABLE;
-	boot_tables.pmd_io[pmd_index(0x09000000)] = (uintptr_t)boot_tables.pte_uart | PMD_TYPE_TABLE;
-	boot_tables.user_pg_dir[pgd_index(APP_FIRST)] = (uintptr_t)boot_tables.pmd_user | PMD_TYPE_TABLE;
-	boot_tables.pmd_user[pmd_index(APP_FIRST)] = (uintptr_t)boot_tables.pte_user | PMD_TYPE_TABLE;
+	create_pgd_mapping(swapper_pg_dir, PHYS_OFFSET, PAGE_OFFSET, RAM_SIZE, PAGE_KERNEL);
+	map_kernel_segment(_text, _etext, PAGE_KERNEL_ROX);
+	map_kernel_segment(__start_rodata, __end_rodata, PAGE_KERNEL_RO);
+	create_pgd_mapping(swapper_pg_dir, 0x08000000, IO_ADDRESS(0x08000000), 0x10000, PROT_DEVICE_nGnRnE);
+	create_pgd_mapping(swapper_pg_dir, 0x080a0000, IO_ADDRESS(0x080a0000), 0x20000, PROT_DEVICE_nGnRnE);
+	create_pgd_mapping(swapper_pg_dir, 0x09000000, IO_ADDRESS(0x09000000), PAGE_SIZE, PROT_DEVICE_nGnRnE);
 
-	/* clang-format off */
-	/*
-	 * Page descriptor (L3 entries, 4KB granule 48-bit OA):
-	 *  63  62   59 58 55 54  53   52   51  50
-	 * +---+-------+-----+---+---+-----+---+--+
-	 * |Sw |IGNORED|Sw   |UXN|PXN|Conti|DBM|GP|
-	 * |USE|       |USE  |   |   |guous|   |  |
-	 * +---+-------+-----+---+---+-----+---+--+
-	 *
-	 * 49  48 47       12     11 10 9 8 7 6  5   4  2 1  0
-	 * +-----+----------+    +--+--+---+---+----+----+----+
-	 * |RES0 |page      |    |nG|AF|SH |AP |RES0|Attr|Type|
-	 * |     |PA[47:12] |    |  |  |   |   |    |Indx|    |
-	 * +-----+----------+    +--+--+---+---+----+----+----+
-	 *
-	 * Non-secure state, so [63] is reserved for software use.
-	 * FEAT_HPDS2 supported (ID_AA64MMFR1_EL1.HPDS=2), but TCR_EL1.HWU0nn = HWU1nn = 0 and
-	 *     HPD0 = HPD1 = 0, so no page-based hardware attributes. FEAT_S1POE not supported
-	 *     (ID_AA64MMFR3_EL1.S1POE=0), so [62:59] ignored.
-	 * qemu virtualization=off, no EL2, no HCR_EL2. FEAT_S1PIE not supported
-	 *     (ID_AA64MMFR3_EL1.S1PIE=0), no indirect permissions. so [54:53] is {UXN,PXN},
-	 * FEAT_THE not supported (ID_AA64PFR1_EL1.THE=0), [52] is contiguous.
-	 * FEAT_HAFDBS supported (ID_AA64MMFR1_EL1.HAFDBS=2), so [51] is Dirty bit modifier (DBM).
-	 * FEAT_BTI is supported (ID_AA64PFR1_EL1.BT=1), [50] is Guarded Page (GP).
-	 * TCR_ELx.DS=0, [49:48] is RES0.
-	 * EL1&0 translation, so [11] is Not global (nG).
-	 * 4KB page and TCR_ELx.DS=0, [9:8] is Shareability (SH).
-	 * EL1&0 translation and FEAT_S1PIE not supported (ID_AA64MMFR3_EL1.S1PIE=0),
-	 *     no indirect permissions, so [7:6] is AP.
-	 * EL1&0 and Non-secure state, so [5] is RES0.
-	 *
-	 *
-	 * SW USE: Reserved for software use.
-	 * UXN: Unprivileged (EL0) Execute Never.
-	 * PXN: Privileged (EL1) Execute Never.
-	 * Contiguous: Identifies a descriptor as belonging to a group of adjacent
-	 *     translation table entries that point to a contiguous OA range.
-	 * DBM: Dirty Bit Modifier; only acts when hardware dirty management is on (TCR_EL1.HD).
-	 * GP: Indicates whether the memory region is guarded.
-	 * nG: 0 - global entries, no ASID matching;
-	 *     1 - non-global entries, ASID matching required.
-	 * AF: Access Flag, set once the region has been accessed. With hardware management off,
-	 *     an access through a descriptor whose AF is 0 takes an Access flag fault.
-	 * SH: 00 - non-shareable; 01 - reserved; 10 - outer-shareable; 11 - inner-shareable
-	 * AP: 00 - PrivRead, PrivWrite; 01 - PrivRead, PrivWrite, UnprivRead, UnprivWrite;
-	 *     10 - PrivRead; 11 - PrivRead, UnprivRead
-	 * AttrIndx: holds the value n used to select the 8-bit field MAIR_ELx.Attr<n>
-	 *     that specifies the memory region attributes.
-	 * Type: 0b11 for page descriptor
-	 */
-	/* clang-format on */
+	for (uintptr_t slot = APP_FIRST; slot < APP_FIRST + APP_COUNT * APP_SLOT_SIZE; slot += APP_SLOT_SIZE) {
+		uintptr_t stack = slot + APP_SLOT_SIZE - APP_STACK_SIZE;
 
-	map_device(boot_tables.pte_gic, 0x08000000, 0x08010000);
-	map_device(boot_tables.pte_gic, 0x080a0000, 0x080c0000);
-	map_device(boot_tables.pte_uart, 0x09000000, 0x09001000);
-
-	for (unsigned i = 0; i < RAM_TABLES; i++) {
-		boot_tables.pmd_ram[i] = (uintptr_t)boot_tables.pte_ram[i] | PMD_TYPE_TABLE;
-		for (unsigned page = 0; page < PTRS_PER_PTE; page++) {
-			uintptr_t address = PHYS_OFFSET + ((uintptr_t)i << PMD_SHIFT) + ((uintptr_t)page << PAGE_SHIFT);
-
-			/*
-			 * AF preset because hardware management is off (TCR_EL1.HA=0),
-			 * inner-shareable, Normal Outer+Inner Non-Cacheable, EL1 only
-			 */
-			boot_tables.pte_ram[i][page] =
-				address | PTE_TYPE_PAGE | PTE_AF | PTE_SHARED | PTE_ATTRINDX(MT_NORMAL_NC);
-		}
+		create_pgd_mapping(user_pg_dir, slot, slot, APP_IMAGE_SIZE, PAGE_READONLY_EXEC);
+		create_pgd_mapping(user_pg_dir, stack, stack, APP_STACK_SIZE, PAGE_SHARED);
 	}
 
-	/* EL0 and EL1 can read and write, EL0 can execute */
-	for (uintptr_t addr = APP_FIRST; addr < APP_FIRST + APP_COUNT * APP_SLOT_SIZE; addr += PAGE_SIZE) {
-		boot_tables.pte_user[pte_index(addr)] =
-			addr | PTE_TYPE_PAGE | PTE_AF | PTE_SHARED | PTE_ATTRINDX(MT_NORMAL_NC) | PTE_USER;
-	}
-
-	/* borrow the identity map from the kernel mapping */
-	map_identity(true);
+	/* The linear map's L2 table, placed at the PHYS_OFFSET index, maps all RAM to itself. */
+	idmap_pg_dir[pgd_index(PHYS_OFFSET)] = swapper_pg_dir[pgd_index(PAGE_OFFSET)];
 
 	__asm__ volatile("dsb sy" : : : "memory");
 
@@ -248,8 +261,8 @@ void mmu_init(void)
 
 	/* 4 KB-aligned base: bits 11:0 are zero, so CnP (bit 0) is clear
 	 * and ASID (bits 63:48) stays 0. */
-	write_sysreg((uintptr_t)boot_tables.user_pg_dir, ttbr0_el1);
-	write_sysreg((uintptr_t)boot_tables.swapper_pg_dir, ttbr1_el1);
+	write_sysreg((uintptr_t)idmap_pg_dir, ttbr0_el1);
+	write_sysreg((uintptr_t)swapper_pg_dir, ttbr1_el1);
 
 	/* invalidate TLB */
 	__asm__ volatile("isb\n\t"
@@ -260,18 +273,18 @@ void mmu_init(void)
 			 :
 			 : "memory");
 
-	/* enable MMU, disable align check, disable data & instruction cache, allow execute on
-	 * writable memory */
+	/* enable MMU, disable align check, disable data & instruction cache; WXN stays clear as
+	 * in Linux, since no page is both writable and executable anyway */
 	write_sysreg((read_sysreg(sctlr_el1) & ~((1UL << 1) | (1UL << 2) | (1UL << 12) | (1UL << 19))) | 1UL,
 		     sctlr_el1);
 	__asm__ volatile("isb" : : : "memory");
 }
 
-/* Called at the high address; afterwards TTBR0 holds only the application mapping. */
+/* Called at the high address, where symbols are virtual. */
 void cpu_uninstall_idmap(void)
 {
-	map_identity(false);
-	__asm__ volatile("dsb sy\n\t"
+	write_sysreg(__pa(user_pg_dir), ttbr0_el1);
+	__asm__ volatile("isb\n\t"
 			 "tlbi vmalle1\n\t"
 			 "dsb sy\n\t"
 			 "isb"

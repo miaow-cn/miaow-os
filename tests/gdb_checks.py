@@ -74,6 +74,7 @@ def boot():
     image = physical("_text")
     assert bytes(inferior.read_memory(image, 64)) == \
         bytes(inferior.read_memory(value("&_text"), 64)), "Identity map missing"
+    assert readable(PHYS_OFFSET + 0x07fff000), "Identity map does not cover all RAM"
     stop_at("start_kernel")
     after = value("$SCTLR")
     assert after & 0x1007 == 1

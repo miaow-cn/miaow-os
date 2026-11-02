@@ -93,13 +93,14 @@ static uint64_t translation(uintptr_t address, unsigned access)
 	return read_sysreg(par_el1);
 }
 
-enum kind {
-	UNMAPPED,
-	RAM,
-	DEVICE,
-	USER,
-	KINDS
-};
+/* Descriptor bits, spelled out independently of mm/mmu.c. */
+#define NORMAL  0x707UL /* page, AttrIndx 1, inner shareable, AF */
+#define DEVICE  0x703UL /* page, AttrIndx 0, inner shareable, AF */
+#define USER    (1UL << 6)
+#define RDONLY  (1UL << 7)
+#define PXN     (1UL << 53)
+#define UXN     (1UL << 54)
+#define ADDRESS 0x0000fffffffff000UL
 
 static const struct {
 	uintptr_t start;
@@ -119,43 +120,76 @@ static bool overlaps(uintptr_t start, uintptr_t size)
 	return false;
 }
 
-static uint64_t expected(uintptr_t address, enum kind *kind)
+static bool inside(uintptr_t address, const void *start, const void *end)
 {
+	return address - (uintptr_t)start < (uintptr_t)end - (uintptr_t)start;
+}
+
+static uint64_t expected(uintptr_t address)
+{
+	uintptr_t offset = (address - APP_FIRST) % APP_SLOT_SIZE;
+
 	if (address - PAGE_OFFSET < RAM_SIZE) {
-		*kind = RAM;
-		return __pa(address) | 0x707UL;
+		if (inside(address, _text, _etext)) {
+			return __pa(address) | NORMAL | RDONLY | UXN;
+		}
+		if (inside(address, __start_rodata, __end_rodata)) {
+			return __pa(address) | NORMAL | RDONLY | PXN | UXN;
+		}
+		return __pa(address) | NORMAL | PXN | UXN;
 	}
 	if (address - APP_FIRST < APP_COUNT * APP_SLOT_SIZE) {
-		*kind = USER;
-		return address | 0x747UL;
+		if (offset < APP_IMAGE_SIZE) {
+			return address | NORMAL | USER | RDONLY | PXN;
+		}
+		if (offset >= APP_SLOT_SIZE - APP_STACK_SIZE) {
+			return address | NORMAL | USER | PXN | UXN;
+		}
+		return 0;
 	}
 	if (overlaps(address, PAGE_SIZE)) {
-		*kind = DEVICE;
-		return (address - IO_OFFSET) | 0x403UL | (3UL << 53);
+		return (address - IO_OFFSET) | DEVICE | PXN | UXN;
 	}
-	*kind = UNMAPPED;
 	return 0;
 }
 
-static void check_translation(uintptr_t address, uintptr_t physical, enum kind kind)
+/* AT reports only data access faults; execute permission is proven by the fault fixtures. */
+static void check_translation(uintptr_t address, uint64_t descriptor)
 {
 	for (unsigned access = 0; access < 4; access++) {
+		bool el0 = access >= 2;
+		bool write = access & 1;
+		bool allowed = descriptor && (!el0 || (descriptor & USER)) && (!write || !(descriptor & RDONLY));
 		uint64_t result = translation(address, access);
-		bool fault = kind == UNMAPPED || (access >= 2 && kind != USER);
-		CHECK((result & 1) == fault);
-		if (!fault) {
-			CHECK((result & 0x0000fffffffff000UL) == physical);
-			CHECK((result >> 56) == (kind == DEVICE ? 0 : 0x44));
+		CHECK((result & 1) == !allowed);
+		if (allowed) {
+			CHECK((result & ADDRESS) == (descriptor & ADDRESS));
+			CHECK((result >> 56) == ((descriptor & 0x1c) ? 0x44 : 0));
 			CHECK(((result >> 7) & 3) == 2);
+		} else if (descriptor) {
+			CHECK(((result >> 1) & 0x3f) == 0x0f); /* level 3 permission fault */
 		}
 	}
+}
+
+/* No writable executable page at either level, and no writable alias of text or rodata. */
+static void check_wx(uint64_t descriptor)
+{
+	bool writable = !(descriptor & RDONLY);
+	uintptr_t physical = descriptor & ADDRESS;
+
+	CHECK(!writable || (descriptor & PXN));
+	CHECK(!writable || !(descriptor & USER) || (descriptor & UXN));
+	CHECK(!writable || !inside(physical, (void *)__pa(_text), (void *)__pa(__end_rodata)));
 }
 
 #define TABLES 72
 
 static uintptr_t tables[TABLES];
 static unsigned table_count;
-static unsigned pages[KINDS];
+static unsigned ram_pages;
+static unsigned device_pages;
+static unsigned user_pages;
 
 static uint64_t *table_pointer(uint64_t descriptor)
 {
@@ -197,11 +231,20 @@ static void walk(uintptr_t root_address, uintptr_t base)
 			uint64_t *leaf = table_pointer(middle[i]);
 			for (unsigned page = 0; page < 512; page++) {
 				uintptr_t address = section | ((uintptr_t)page << 12);
-				enum kind kind;
-				uint64_t descriptor = expected(address, &kind);
+				uint64_t descriptor = expected(address);
 				CHECK(leaf[page] == descriptor);
-				check_translation(address + PAGE_SIZE - 1, descriptor & 0x0000fffffffff000UL, kind);
-				pages[kind]++;
+				check_translation(address + PAGE_SIZE - 1, descriptor);
+				if (!descriptor) {
+					continue;
+				}
+				check_wx(leaf[page]);
+				if (descriptor & USER) {
+					user_pages++;
+				} else if (descriptor & 0x1c) {
+					ram_pages++;
+				} else {
+					device_pages++;
+				}
 			}
 		}
 	}
@@ -232,6 +275,9 @@ static void mmu_selftest(void)
 	};
 	uintptr_t user_pg_dir = read_sysreg(ttbr0_el1);
 	uintptr_t swapper_pg_dir = read_sysreg(ttbr1_el1);
+	CHECK(!((uintptr_t)_etext % PAGE_SIZE) && !((uintptr_t)__end_rodata % PAGE_SIZE));
+	CHECK(inside((uintptr_t)start_kernel, _text, _etext));
+	CHECK(inside((uintptr_t)holes, __start_rodata, __end_rodata));
 	walk(user_pg_dir, 0);
 	walk(swapper_pg_dir, 0xffffff8000000000UL);
 	CHECK(table_count == TABLES);
@@ -246,11 +292,11 @@ static void mmu_selftest(void)
 		}
 	}
 	for (unsigned i = 0; i < sizeof(holes) / sizeof(holes[0]); i++) {
-		check_translation(holes[i], 0, UNMAPPED);
+		check_translation(holes[i], 0);
 	}
 	printk("MMU TCR=%016lx MAIR=%016lx TTBR0=%016lx TTBR1=%016lx tables=%016lx-%016lx\n", read_sysreg(tcr_el1),
 	       read_sysreg(mair_el1), user_pg_dir, swapper_pg_dir, low, high + PAGE_SIZE);
-	printk("MMU SELFTEST OK ram=%u device=%u user=%u\n", pages[RAM], pages[DEVICE], pages[USER]);
+	printk("MMU SELFTEST OK ram=%u device=%u user=%u\n", ram_pages, device_pages, user_pages);
 }
 
 void __wrap_mem_init(void)

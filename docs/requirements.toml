@@ -82,8 +82,8 @@ status = "implemented"
 acceptance = [
     "Repeated timer preemption preserves x0-x30, SP_EL0, ELR_EL1, and SPSR_EL1 including condition flags.",
     "Runtime exception observations confirm an EL0t origin and EL1 handling; resumed applications have IRQ enabled while kernel handlers keep IRQ masked without nesting.",
-    "An unexpected EL0 synchronous exception reports task identity, ESR, and ELR, stops that task, and allows another runnable task to continue.",
-    "An unexpected EL1 exception reports ESR and ELR and halts instead of returning to a damaged context.",
+    "An unexpected EL0 synchronous exception reports task identity, ESR, FAR, and ELR, stops that task, and allows another runnable task to continue.",
+    "An unexpected EL1 exception reports ESR, FAR, and ELR and halts instead of returning to a damaged context.",
 ]
 
 [[requirements]]
@@ -180,7 +180,7 @@ status = "implemented"
 acceptance = [
     "Map every page of the 128 MiB RAM as Normal non-cacheable memory with inner-shareable page descriptors, including the kernel, stack, allocator memory, device tree, and application slots.",
     "Map the PL011 page at physical 0x09000000, the 64 KiB GIC distributor at 0x08000000, and the 128 KiB CPU 0 redistributor at 0x080a0000 as privileged, non-executable Device-nGnRnE memory; leave other device ranges unmapped.",
-    "While translation is being enabled, TTBR0 identity maps the physical addresses of the whole kernel image for EL1, so the code and stack in use stay reachable until execution continues at high addresses.",
+    "While translation is being enabled, TTBR0 identity maps the physical addresses of all RAM, for EL1 by reusing the linear map's L2 table, so the code and stack in use stay reachable until execution continues at high addresses.",
     "Use page-aligned static tables reserved as part of the kernel image, publish them with barriers, and invalidate stale TLB entries before enabling translation.",
 ]
 
@@ -193,5 +193,18 @@ acceptance = [
     "Link the kernel at virtual 0xffffffc000080000 and load it at physical 0x40080000; on entry to start_kernel, PC, SP, and VBAR_EL1 hold high virtual addresses inside the kernel image.",
     "Map physical RAM 0x40000000-0x47ffffff linearly at 0xffffffc000000000 for EL1 only, and each mapped device page at 0xffffff8000000000 plus its physical address; all other TTBR1 addresses remain unmapped.",
     "Remove the kernel identity mapping and invalidate stale TLB entries before start_kernel, so kernel and device physical addresses are unmapped in TTBR0.",
-    "TTBR0 then maps only the application slots at their physical addresses with EL0 rwx permission through one shared compatibility mapping.",
+    "TTBR0 then maps only the application images and stacks at their physical addresses through one shared compatibility mapping.",
+]
+
+[[requirements]]
+id = "REQ-MM-006"
+title = "Enforce page permissions"
+statement = "The kernel shall map each page with only the access its use requires, so that no mapping is both writable and executable and kernel code has no writable alias."
+status = "implemented"
+acceptance = [
+    "Kernel text is EL1 read-only executable and read-only data is EL1 read-only; all other RAM is EL1 read/write; only text is executable, and no RAM mapping in TTBR1 is accessible from EL0.",
+    "Each application slot maps its 64 KiB image region EL0 read-only executable and its 16 KiB stack EL0 read/write non-executable, both non-executable at EL1; the gap between them is unmapped.",
+    "Text and read-only data are page-aligned; no mapping of text or read-only data is writable, and no mapping in either TTBR is writable and executable at the same exception level.",
+    "At EL1, writing text or read-only data, executing read-only data, data, stack, or application pages, and reading an unmapped address raise level 3 permission or translation faults with FAR set to the address.",
+    "At EL0, writing application code, executing the application stack, and reading kernel memory raise level 3 permission faults; the kernel stops that task and keeps running the others.",
 ]

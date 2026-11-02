@@ -79,18 +79,30 @@ copy the remaining bytes without widening past the requested range.
 
 [mmu.c](../mm/mmu.c): two 39-bit address spaces with three levels (L1/L2/L3),
 512 entries per table, and 4 KiB pages. There are no block descriptors.
-The 72 static table pages live in page-aligned BSS, are zeroed by startup,
+`create_pgd_mapping()` walks from an L1 root and takes missing L2/L3 tables from
+a static pool; later calls overwrite earlier pages, which is how kernel segments
+tighten the linear map. The three roots (`swapper_pg_dir`, `user_pg_dir`,
+`idmap_pg_dir`) and the pool live in page-aligned BSS, are zeroed by startup,
 and remain reserved below `_end`.
 
 | Mapping | Attribute | Access |
 | --- | --- | --- |
-| TTBR1: all 128 MiB RAM at `PAGE_OFFSET` | Normal non-cacheable, MAIR index 1 (`0x44`) | EL1 read/write/execute |
-| TTBR1: PL011, 4 KiB, at `IO_OFFSET` + PA | Device-nGnRnE, MAIR index 0 (`0x00`) | EL1 read/write, PXN and UXN |
-| TTBR1: GIC distributor, 64 KiB | Same Device attribute | EL1 read/write, PXN and UXN |
-| TTBR1: CPU 0 redistributor and SGI frame, 128 KiB | Same Device attribute | EL1 read/write, PXN and UXN |
-| TTBR0: three complete app slots, VA = PA | Same RAM attribute | EL0 and EL1 read/write, EL0 execute, shared by all apps |
+| TTBR1: all 128 MiB RAM at `PAGE_OFFSET` | Normal non-cacheable, MAIR index 1 (`0x44`) | `PAGE_KERNEL`: EL1 read/write |
+| TTBR1: kernel text, `_text`..`_etext` | Same RAM attribute | `PAGE_KERNEL_ROX`: EL1 read/execute |
+| TTBR1: kernel rodata, `__start_rodata`..`__end_rodata` | Same RAM attribute | `PAGE_KERNEL_RO`: EL1 read |
+| TTBR1: PL011, 4 KiB, at `IO_OFFSET` + PA | Device-nGnRnE, MAIR index 0 (`0x00`) | `PROT_DEVICE_nGnRnE`: EL1 read/write |
+| TTBR1: GIC distributor, 64 KiB | Same Device attribute | Same |
+| TTBR1: CPU 0 redistributor and SGI frame, 128 KiB | Same Device attribute | Same |
+| TTBR0: 64 KiB image region of each app slot, VA = PA | Same RAM attribute | `PAGE_READONLY_EXEC`: EL0 read/execute, EL1 read |
+| TTBR0: 16 KiB stack of each app slot, VA = PA | Same RAM attribute | `PAGE_SHARED`: EL0 and EL1 read/write |
 
-All other addresses remain unmapped. RAM descriptors request Inner Shareable;
+Everything not listed as executable is execute-never, and all other addresses,
+including the 48 KiB guard gap in each slot, remain unmapped. The names and bit
+patterns follow Linux's `pgtable-prot.h`, without nG, DBM, or software bits. The
+linker script page-aligns text and rodata and gives each its own ELF segment. The linear
+map is the only mapping of kernel text and rodata, so no writable alias remains.
+App code is written through its EL1-only linear alias.
+RAM descriptors request Inner Shareable;
 Normal non-cacheable and Device memory have effective Outer Shareable semantics,
 which is what `AT` reports in `PAR_EL1`. Table walks are non-cacheable.
 
@@ -108,16 +120,16 @@ The switch follows Linux's `__enable_mmu`/`__turn_mmu_on`/`__mmap_switched`:
 
 1. [boot.S](../kernel/boot.S) runs at physical addresses to set the stack, clear BSS,
    and save the DTB.
-2. `mmu_init()` also runs at physical addresses. It fills both halves and temporarily
-   points the TTBR0 L2 entries covering the kernel image at the linear map's own
-   L3 tables. This creates an identity map without extra tables. It programs
-   MAIR/TCR/TTBR0/TTBR1, and sets `SCTLR_EL1.M`. `A`, `C`, `I`, and `WXN` are
-   explicitly cleared. Its return still executes from the identity map.
+2. `mmu_init()` also runs at physical addresses. It fills both halves and places the
+   linear map's L1 entry at the `PHYS_OFFSET` index of `idmap_pg_dir`. Because both
+   offsets are 1 GiB aligned, the same L2/L3 tables then map all RAM to itself.
+   It programs MAIR/TCR/TTBR0 (the idmap)/TTBR1, and sets `SCTLR_EL1.M`. `A`, `C`, `I`,
+   and `WXN` are explicitly cleared. Its return still executes from the identity map.
 3. A `BR` enters the link-time address of `__mmap_switched` at high mapping.
    The stack and `VBAR_EL1` are reloaded with high addresses. `cpu_uninstall_idmap()`
-   clears the borrowed entries before `start_kernel()`.
+   switches TTBR0 to `user_pg_dir` and flushes the TLB before `start_kernel()`.
 
-Permission hardening and cache enablement belong to the next milestones.
+Cache enablement belongs to the next milestone.
 
 ## Follow the Execution
 
@@ -147,7 +159,8 @@ scheduling. Logging itself does not yield; timer IRQ, exit and fault can switch 
 
 A task that exits or faults is no longer runnable. If one remains it keeps running;
 if none remain, the timer is disabled and the kernel prints `ALL APPS DONE` and
-idles. A kernel exception reports ESR/ELR and halts. QEMU must be stopped separately.
+idles. A task fault reports ESR/FAR/ELR; a kernel exception reports the same and
+halts. QEMU must be stopped separately. FAR is meaningful only for aborts.
 
 ## System Calls
 
@@ -174,13 +187,12 @@ UART, while log syscall payloads stay byte-exact and bypass the formatter.
 ## Limits and Evidence
 
 EL0 prohibits privileged instructions and cannot access kernel or device pages,
-but all app slots share one mapping: there is no app-to-app isolation, no guard
-pages within the slots, and no stack execute protection. Only trusted apps are supported.
+write its code, or execute its stack, but all app slots share one mapping: there
+is no app-to-app isolation. Only trusted apps are supported.
 Applications get no memory system calls; the allocators serve the kernel only.
 All code is compiled with `-mgeneral-regs-only`; floating point, SIMD and SVE
-contexts are deliberately unsupported. RAM remains writable and executable;
-ELF segment flags do not yet determine page permissions. Caches stay off to keep
-copied-code startup simple.
+contexts are deliberately unsupported. Caches stay off to keep copied-code
+startup simple.
 
 [test_kernel.py](../tests/test_kernel.py) builds real fixtures and captures bounded
 QEMU serial output. Three no-SVC loops run both without a debugger and with
@@ -188,7 +200,10 @@ external GDB observations of nine timer exceptions. These check timer-driven
 progress, task order and register/flag preservation over repeated resumes;
 alternating demo log lines alone do not prove preemption.
 Other checks exercise syscall returns, faults, linker rejection, incremental
-repackaging, and all runnable-task combinations. All test-only code lives in
+repackaging, and all runnable-task combinations. Permission tests walk both page
+tables and take real faults: the kernel fault image installs a test-only vector
+that records ESR/FAR and resumes after each probe, and one EL0 fixture built into
+all three slots makes a different forbidden access in each. All test-only code lives in
 `tests/`. Separate test images reuse the normal kernel object files, using
 link-time entry wrapping, without test switches or hooks in production sources.
 The normal demo image is still built and tested independently.

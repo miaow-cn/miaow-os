@@ -56,7 +56,9 @@ def host(name, *sources):
 
 
 def emulate(image, marker, extra=(), occurrences=1):
+    """Run until marker has occurred often enough and its last line is complete."""
     output = bytearray()
+    needle = marker.encode()
     with subprocess.Popen(
         [*QEMU, *extra, "-kernel", str(image)], cwd=ROOT,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -65,7 +67,8 @@ def emulate(image, marker, extra=(), occurrences=1):
             with selectors.DefaultSelector() as selector:
                 selector.register(process.stdout, selectors.EVENT_READ)
                 deadline = time.monotonic() + 10
-                while output.count(marker.encode()) < occurrences:
+                while (output.count(needle) < occurrences
+                       or b"\n" not in output[output.rfind(needle):]):
                     remaining = deadline - time.monotonic()
                     if remaining <= 0 or not selector.select(remaining):
                         raise AssertionError(f"QEMU timed out:\n{output.decode(errors='replace')}")
@@ -144,7 +147,7 @@ class KernelTests(unittest.TestCase):
         self.assertNotIn("PANIC", output)
         self.assertNotIn("FAULT", output)
         self.assertNotIn("FAIL", output)
-        self.assertIn("MMU SELFTEST OK ram=32768 device=49 user=96\n", output)
+        self.assertIn("MMU SELFTEST OK ram=32768 device=49 user=60\n", output)
         self.assertIn("MM SELFTEST OK\n", output)
         match = re.search(
             r"MMU TCR=([0-9a-f]+) MAIR=([0-9a-f]+) TTBR0=([0-9a-f]+) "
@@ -158,7 +161,6 @@ class KernelTests(unittest.TestCase):
             self.assertTrue(start <= root < end, hex(root))
         self.assertNotEqual(user, kernel)
         self.assertEqual(start % 4096, 0)
-        self.assertEqual(end - start, 72 * 4096)
         self.assertGreaterEqual(start, 0x40080000)
         self.assertLessEqual(end, 0x41000000)
         reserved = [(int(low, 16), int(high, 16))
@@ -219,7 +221,7 @@ class KernelTests(unittest.TestCase):
         self.assertIn("[app 0] " + "Z" * 256 + "[app 0] \n", output)
         self.assertIn("[app 0] syscalls OK\n", output)
         self.assertIn("[app 0] EXIT status=0", output)
-        self.assertRegex(output, r"\[app 1\] FAULT ESR=[0-9a-f]{16} ELR=000000004102[0-9a-f]{4}")
+        self.assertRegex(output, r"\[app 1\] FAULT ESR=[0-9a-f]{16} FAR=[0-9a-f]{16} ELR=000000004102[0-9a-f]{4}")
         self.assertNotIn("[app 1] EXIT", output)
         self.assertIn("[app 2] checksum result=510000000", output)
         self.assertIn("[app 2] EXIT status=0", output)
@@ -238,10 +240,69 @@ class KernelTests(unittest.TestCase):
     def test_kernel_fault_halts(self):
         with tempfile.TemporaryDirectory() as directory:
             build(directory, target="fault_test_image")
-            output = emulate(Path(directory) / "fault_test.bin", "PANIC EL1 ESR=0000000002000000 ELR=", occurrences=1)
+            output = emulate(Path(directory) / "fault_test.bin", "PANIC EL1 ")
         self.assertNotIn("FAULT SELFTEST FAIL", output)
         self.assertNotIn("LOADED", output)
         self.assertNotIn("ALL APPS DONE", output)
+        match = re.search(r"PANIC EL1 ESR=([0-9a-f]{16}) FAR=([0-9a-f]{16}) ELR=([0-9a-f]{16})\n", output)
+        self.assertIsNotNone(match, output)
+        syndrome, address, link = (int(value, 16) for value in match.groups())
+        # Data abort from EL1: level 3 permission fault on a write to _text.
+        self.assertEqual(syndrome >> 26, 0x25)
+        self.assertEqual(syndrome & 0x7f, 0x4f)
+        self.assertEqual(address, KERNEL_START)
+        self.assertTrue(KERNEL_START <= link < KERNEL_LIMIT, hex(link))
+
+    @verifies("REQ-MM-006", "REQ-EXC-001")
+    def test_kernel_page_permissions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build(directory, target="fault_test_image")
+            output = emulate(Path(directory) / "fault_test.bin", "PANIC EL1 ")
+        probes = {name: tuple(int(value, 16) for value in values) for name, *values in re.findall(
+            r"PROBE (\S+) address=([0-9a-f]{16}) ESR=([0-9a-f]{16}) FAR=([0-9a-f]{16})\n", output)}
+        # Exception class and ISS bits 6:0 (WnR and fault status code) per probe.
+        expected = {
+            "write-text": (0x25, 0x4f), "write-rodata": (0x25, 0x4f),
+            "exec-rodata": (0x21, 0x0f), "exec-data": (0x21, 0x0f),
+            "exec-stack": (0x21, 0x0f), "exec-user": (0x21, 0x0f),
+            "read-unmapped": (0x25, 0x07),
+        }
+        self.assertEqual(set(probes), set(expected), output)
+        for name, (exception_class, status) in expected.items():
+            with self.subTest(probe=name):
+                address, syndrome, fault_address = probes[name]
+                self.assertEqual(syndrome >> 26, exception_class)
+                self.assertEqual(syndrome & 0x7f, status)
+                self.assertEqual(fault_address, address)
+        self.assertEqual(probes["write-text"][0], KERNEL_START)
+        self.assertEqual(probes["exec-user"][0], 0x41000000)
+        self.assertEqual(probes["read-unmapped"][0], 0x41010000)
+
+    @verifies("REQ-MM-006", "REQ-EXC-001")
+    def test_user_page_permissions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build(directory, *(f"APP{index}=tests/fixtures/user_fault.c" for index in range(3)))
+            output = emulate(Path(directory) / "kernel.bin", "ALL APPS DONE\n")
+        self.assertNotIn("PANIC", output)
+        self.assertNotIn("ERROR", output)
+        self.assertNotIn("EXIT", output)
+        faults = {int(task): tuple(int(value, 16) for value in values) for task, *values in re.findall(
+            r"\[app (\d)\] FAULT ESR=([0-9a-f]{16}) FAR=([0-9a-f]{16}) ELR=([0-9a-f]{16})\n", output)}
+        self.assertEqual(set(faults), {0, 1, 2}, output)
+        # App 0 writes its own code: data abort from EL0, write, level 3 permission fault.
+        syndrome, address, link = faults[0]
+        self.assertEqual((syndrome >> 26, syndrome & 0x7f), (0x24, 0x4f))
+        self.assertTrue(0x41000000 <= address < 0x41010000, hex(address))
+        self.assertTrue(0x41000000 <= link < 0x41010000, hex(link))
+        # App 1 branches into its stack: instruction abort from EL0.
+        syndrome, address, link = faults[1]
+        self.assertEqual((syndrome >> 26, syndrome & 0x7f), (0x20, 0x0f))
+        self.assertTrue(0x4103c000 <= address < 0x41040000, hex(address))
+        self.assertEqual(link, address)
+        # App 2 reads the kernel image.
+        syndrome, address, _ = faults[2]
+        self.assertEqual((syndrome >> 26, syndrome & 0x7f), (0x24, 0x0f))
+        self.assertEqual(address, KERNEL_START)
 
     @verifies("REQ-BOOT-001")
     def test_rejects_el2_entry(self):
