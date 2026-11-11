@@ -54,6 +54,37 @@ def readable(address):
     return True
 
 
+def instructions(symbol, before_mmu=False):
+    virtual = value(f"&{symbol}")
+    block = gdb.block_for_pc(virtual)
+    count = (block.end - virtual) // 4 if block else 32
+    address = physical(symbol) if before_mmu else virtual
+    code = gdb.selected_inferior().architecture().disassemble(address, count=count)
+    for instruction in code:
+        instruction["asm"] = " ".join(instruction["asm"].split())
+    return code
+
+
+class MaintenanceTrace(gdb.Breakpoint):
+    def __init__(self, address, instruction, events):
+        super().__init__(f"*{address}", type=gdb.BP_HARDWARE_BREAKPOINT, internal=True)
+        self.instruction = instruction
+        self.events = events
+
+    def stop(self):
+        if self.instruction == "ic iallu":
+            assert value("$SCTLR") & 0x1005 == 0
+        self.events.append(self.instruction)
+        return False
+
+
+def check_tlbi(events, expected):
+    indexes = [index for index, event in enumerate(events) if event.startswith("tlbi ")]
+    assert len(indexes) == expected, events
+    for index in indexes:
+        assert events[index - 1:index + 3] == ["dsb ishst", "tlbi vmalle1", "dsb ish", "isb"], events
+
+
 def boot():
     stop_at("_start", before_mmu=True)
     start = physical("__bss_start")
@@ -70,14 +101,14 @@ def boot():
     set_control(control | 2)
     assert value("$SCTLR") & 2
     stop_at("__mmap_switched")
-    assert value("$SCTLR") & 1
+    assert value("$SCTLR") & 3 == 1
     image = physical("_text")
     assert bytes(inferior.read_memory(image, 64)) == \
         bytes(inferior.read_memory(value("&_text"), 64)), "Identity map missing"
     assert readable(PHYS_OFFSET + 0x07fff000), "Identity map does not cover all RAM"
     stop_at("start_kernel")
     after = value("$SCTLR")
-    assert after & 0x1007 == 1
+    assert after & 3 == 1
     assert after & 0x18 == control & 0x18
     assert value("$sp") == value("&__stack_top")
     assert not readable(image), "Identity map still present"
@@ -85,6 +116,60 @@ def boot():
     assert readable(value("&_text"))
     stop_at("start_apps")
     print("GDB BOOT OK")
+
+
+def cache():
+    stop_at("mmu_init", before_mmu=True)
+    events = []
+    probes = []
+    for symbol, low in (("mmu_init", True), ("flush_tlb_all", True),
+                        ("cpu_uninstall_idmap", False), ("flush_tlb_all", False)):
+        for instruction in instructions(symbol, before_mmu=True):
+            operation = instruction["asm"]
+            if operation.split()[0] in ("dsb", "isb", "tlbi", "ic"):
+                address = instruction["addr"] + (0 if low else PAGE_OFFSET - PHYS_OFFSET)
+                probes.append(MaintenanceTrace(address, operation, events))
+    stop_at("__mmap_switched")
+    assert value("$SCTLR") & 0x1004 == 0x1004
+    check_tlbi(events, 1)
+    index = events.index("ic iallu")
+    assert events[index:index + 3] == ["ic iallu", "dsb sy", "isb"], events
+    stop_at("start_kernel")
+    assert value("$SCTLR") & 0x1004 == 0x1004
+    check_tlbi(events, 2)
+    for probe in probes:
+        probe.delete()
+    print("GDB CACHE BOOT OK")
+    for identifier in range(3):
+        stop_at("flush_icache_range")
+        start, end = value("$x0"), value("$x1")
+        assert start == PAGE_OFFSET + 0x01000000 + identifier * 0x20000
+        assert end - start == value(f"tasks[{identifier}].size")
+        assert value("$SCTLR") & 0x1004 == 0x1004
+        line = 4 << ((value("$CTR_EL0") >> 16) & 15)
+        code = instructions("flush_icache_range")
+        clean = next(instruction["addr"] for instruction in code if instruction["asm"] == "dc cvau, x4")
+        barrier = next(index for index, instruction in enumerate(code) if instruction["asm"] == "dsb sy")
+        expected = ["dsb sy", "ic iallu", "dsb sy", "isb", "ret"]
+        assert [instruction["asm"] for instruction in code[barrier:barrier + 5]] == expected
+        probe = gdb.Breakpoint(f"*{clean}", type=gdb.BP_HARDWARE_BREAKPOINT, internal=True)
+        for address in range(start & -line, end, line):
+            gdb.execute("continue")
+            assert value("$pc") == clean
+            assert value("$x4") == address
+            assert value("$x2") == line
+        probe.delete()
+        stop = code[barrier]["addr"]
+        probe = gdb.Breakpoint(f"*{stop}", type=gdb.BP_HARDWARE_BREAKPOINT, internal=True)
+        gdb.execute("continue")
+        assert value("$pc") == stop
+        probe.delete()
+        for instruction in code[barrier:barrier + 5]:
+            assert value("$pc") == instruction["addr"]
+            gdb.execute("stepi")
+        print(f"GDB CACHE app={identifier} lines={len(range(start & -line, end, line))} OK")
+    stop_at("enter_app")
+    print("GDB CACHE OK")
 
 
 def preempt():

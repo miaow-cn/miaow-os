@@ -132,7 +132,7 @@ class KernelTests(unittest.TestCase):
         self.assertIsNotNone(match, output)
         level, control, vectors, stack, _ = (int(value, 16) for value in match.groups())
         self.assertEqual(level, 1)
-        self.assertEqual(control & 0x1005, 1)
+        self.assertEqual(control & 1, 1)
         self.assertEqual(vectors % 2048, 0)
         self.assertGreaterEqual(vectors, KERNEL_START)
         self.assertEqual(stack % 16, 0)
@@ -154,9 +154,8 @@ class KernelTests(unittest.TestCase):
             r"TTBR1=([0-9a-f]+) tables=([0-9a-f]+)-([0-9a-f]+)", output,
         )
         self.assertIsNotNone(match, output)
-        tcr, mair, user, kernel, start, end = (int(value, 16) for value in match.groups())
-        self.assertEqual(tcr, 25 | (3 << 12) | (25 << 16) | (3 << 28) | (2 << 30))
-        self.assertEqual(mair, 0x4400)
+        tcr, _, user, kernel, start, end = (int(value, 16) for value in match.groups())
+        self.assertEqual(tcr & ~((0x3f << 8) | (0x3f << 24)), 25 | (25 << 16) | (2 << 30))
         for root in (user, kernel):
             self.assertTrue(start <= root < end, hex(root))
         self.assertNotEqual(user, kernel)
@@ -168,11 +167,42 @@ class KernelTests(unittest.TestCase):
         self.assertTrue(any(low <= start < end <= high for low, high in reserved), reserved)
         control = re.search(r"BOOT EL=1 SCTLR=([0-9a-f]+)", output)
         self.assertIsNotNone(control, output)
-        self.assertEqual(int(control.group(1), 16) & 0x1005, 1)
+        self.assertEqual(int(control.group(1), 16) & 1, 1)
         for index in range(3):
             self.assertIn(f"[app {index}] EXIT status=0\n", output)
 
-    @verifies("REQ-APP-001", "REQ-SYS-001", "REQ-BUILD-001", "REQ-PRINT-001", "REQ-MM-004", "REQ-MM-005")
+    @verifies("REQ-MM-007")
+    def test_cache_configuration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build(directory, target="memory_test_image")
+            output = emulate(Path(directory) / "memory_test.bin", "ALL APPS DONE\n")
+        self.assertNotIn("PANIC", output)
+        self.assertNotIn("FAULT", output)
+        self.assertNotIn("FAIL", output)
+        self.assertIn("MMU SELFTEST OK ram=32768 device=49 user=60\n", output)
+        self.assertIn("TLB SELFTEST OK\n", output)
+        match = re.search(r"MMU TCR=([0-9a-f]+) MAIR=([0-9a-f]+)", output)
+        self.assertIsNotNone(match, output)
+        tcr, mair = (int(value, 16) for value in match.groups())
+        walk_attributes = (0x3f << 8) | (0x3f << 24)
+        self.assertEqual(tcr & walk_attributes, (1 << 8) | (1 << 10) | (3 << 12)
+                         | (1 << 24) | (1 << 26) | (3 << 28))
+        self.assertEqual(mair, 0xff00)
+        control = re.search(r"BOOT EL=1 SCTLR=([0-9a-f]+)", output)
+        self.assertIsNotNone(control, output)
+        self.assertEqual(int(control.group(1), 16) & 0x1004, 0x1004)
+
+    @verifies("REQ-MM-007", "REQ-APP-001")
+    def test_application_cache_synchronization(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build(directory)
+            output, observations = debug(Path(directory) / "kernel.bin", "cache")
+        self.assertNotIn("PANIC", output)
+        self.assertIn("GDB CACHE BOOT OK", observations)
+        self.assertIn("GDB CACHE OK", observations)
+        self.assertEqual(re.findall(r"GDB CACHE app=(\d) lines=\d+ OK", observations), ["0", "1", "2"])
+
+    @verifies("REQ-APP-001", "REQ-SYS-001", "REQ-BUILD-001", "REQ-PRINT-001", "REQ-MM-004", "REQ-MM-005", "REQ-MM-007")
     def test_independent_demos(self):
         with tempfile.TemporaryDirectory() as directory:
             build(directory)
@@ -189,7 +219,7 @@ class KernelTests(unittest.TestCase):
         self.assertIn("[app 1] primes result=9592\n", output)
         self.assertIn("[app 2] checksum result=510000000\n", output)
 
-    @verifies("REQ-SCHED-001", "REQ-EXC-001", "REQ-PRINT-001", "REQ-MM-004")
+    @verifies("REQ-SCHED-001", "REQ-EXC-001", "REQ-PRINT-001", "REQ-MM-004", "REQ-MM-007")
     def test_preempts_without_syscalls(self):
         with tempfile.TemporaryDirectory() as directory:
             build(directory, *(f"APP{index}=tests/fixtures/spin.S" for index in range(3)))
@@ -211,7 +241,7 @@ class KernelTests(unittest.TestCase):
         frequency, quantum = re.search(r"TIMER frequency=([0-9a-f]+) quantum=([0-9a-f]+)", output).groups()
         self.assertEqual(int(quantum, 16), int(frequency, 16) // 100)
 
-    @verifies("REQ-SYS-001", "REQ-EXC-001", "REQ-SCHED-001", "REQ-PRINT-001")
+    @verifies("REQ-SYS-001", "REQ-EXC-001", "REQ-SCHED-001", "REQ-PRINT-001", "REQ-MM-007")
     def test_syscalls_and_task_fault(self):
         with tempfile.TemporaryDirectory() as directory:
             build(directory, "APP0=tests/fixtures/syscalls.c", "APP1=tests/fixtures/fault.c")
@@ -253,7 +283,7 @@ class KernelTests(unittest.TestCase):
         self.assertEqual(address, KERNEL_START)
         self.assertTrue(KERNEL_START <= link < KERNEL_LIMIT, hex(link))
 
-    @verifies("REQ-MM-006", "REQ-EXC-001")
+    @verifies("REQ-MM-006", "REQ-EXC-001", "REQ-MM-007")
     def test_kernel_page_permissions(self):
         with tempfile.TemporaryDirectory() as directory:
             build(directory, target="fault_test_image")
@@ -278,7 +308,7 @@ class KernelTests(unittest.TestCase):
         self.assertEqual(probes["exec-user"][0], 0x41000000)
         self.assertEqual(probes["read-unmapped"][0], 0x41010000)
 
-    @verifies("REQ-MM-006", "REQ-EXC-001")
+    @verifies("REQ-MM-006", "REQ-EXC-001", "REQ-MM-007")
     def test_user_page_permissions(self):
         with tempfile.TemporaryDirectory() as directory:
             build(directory, *(f"APP{index}=tests/fixtures/user_fault.c" for index in range(3)))
@@ -450,7 +480,7 @@ class KernelTests(unittest.TestCase):
         match = re.search(r"BOOT EL=1 SCTLR=([0-9a-f]+)", output)
         self.assertIsNotNone(match, output)
         control = int(match.group(1), 16)
-        self.assertEqual(control & 0x1007, 1)
+        self.assertEqual(control & 3, 1)
         self.assertEqual(control & ((1 << 3) | (1 << 4)), (1 << 3) | (1 << 4))
         for index in range(3):
             self.assertIn(f"[app {index}] EXIT status=0\n", output)
@@ -472,7 +502,7 @@ class KernelTests(unittest.TestCase):
         host("kmalloc", "lib/string.c", "mm/page_alloc.c", "mm/slab.c",
              "tests/fixtures/kmalloc.c")
 
-    @verifies("REQ-MM-001", "REQ-MM-002", "REQ-MM-003", "REQ-PRINT-001", "REQ-MM-004", "REQ-MM-005")
+    @verifies("REQ-MM-001", "REQ-MM-002", "REQ-MM-003", "REQ-PRINT-001", "REQ-MM-004", "REQ-MM-005", "REQ-MM-007")
     def test_memory_map_and_allocators(self):
         with tempfile.TemporaryDirectory() as directory:
             build(directory, target="memory_test_image")

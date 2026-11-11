@@ -9,9 +9,18 @@ One entry per imported component, as required by [development.md](development.md
 
 - Scope: [mmu.c](../mm/mmu.c), [boot.S](../kernel/boot.S), [linker.ld.S](../kernel/linker.ld.S), and [memory.h](../include/miaow/memory.h).
 - The earliest ARM64 boot implementation is `arch/arm64/kernel/head.S` at `9703d9d7f77ce129621f7d80a844822e2daa7008`. Register setup and descriptor definitions were checked against `arch/arm64/mm/proc.S` and `arch/arm64/include/asm/pgtable-hwdef.h` at tag `v3.7` in the Linux kernel.
+- TCR field names and encodings follow `arch/arm64/include/asm/pgtable-hwdef.h` at Linux `v4.0`, commit `39a8804455fb23f09157341d3ba7db6d7ae6ee76` (`GPL-2.0-only`, Copyright (C) 2012 ARM Ltd.): `TCR_TxSZ`, `TCR_IRGN_WBWA`, `TCR_ORGN_WBWA`, `TCR_SHARED`, `TCR_TG0_4K`, and `TCR_TG1_4K`. Only architecture-defined constants and field arithmetic remain, using `UL` literals instead of Linux's `UL()` wrapper; no Linux implementation is imported.
 - The high-address switch follows the same `head.S` revision: an `idmap_pg_dir` in TTBR0 and `swapper_pg_dir` in TTBR1, `__enable_mmu`/`__turn_mmu_on`, then an absolute branch to `__mmap_switched`. The kernel lives inside the linear map at `PAGE_OFFSET = 0xffffffc000000000`, and `__pa`/`__va`/`virt_to_page` follow `arch/arm64/include/asm/memory.h` at tag `v3.7`. Replacing the idmap in TTBR0 after the switch mirrors `cpu_uninstall_idmap()` in `arch/arm64/include/asm/mmu_context.h` at `551c722f40809618230001baccf219193e22fc5a`.
 - Page permissions follow `da141706aea52c1a9fbd28cb8d289b78819f5436` ("arm64: add better page protections to arm64"), which splits the linear map around the kernel while the image still lives in it, and use the protection names and bit patterns of `arch/arm64/include/asm/pgtable-prot.h` (`GPL-2.0-only`) at `551c722f40809618230001baccf219193e22fc5a`: `PAGE_KERNEL`, `PAGE_KERNEL_RO`, `PAGE_KERNEL_ROX`, `PAGE_SHARED`, `PAGE_READONLY_EXEC`, `PROT_DEVICE_nGnRnE`. Segment symbols `_etext`, `__start_rodata`, and `__end_rodata` follow `include/asm-generic/sections.h`.
 - The fixed three-level, page-only tables need none of Linux's block mapping, table splitting, allocator callbacks, relocation, CPU selection, SMP, data copying, or cache maintenance. `create_pgd_mapping()` is a per-page walk over a static pool rather than Linux's nested `alloc_init_*` loops, and the idmap reuses the linear map's L2 table instead of owning tables. Too little remains for a recognizable port; this is original GPL-3.0-or-later code using architecture-defined descriptors, Linux identifiers, the publish/configure/TLBI/enable sequence, and one-line address conversions.
+
+## mm/cache.S
+
+- Upstream: [Linux](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git), `arch/arm64/mm/cache.S` and `arch/arm64/mm/proc-macros.S`, tag `v3.7`, commit `29594404d7fe73cd80eaa4ee8c43dcc53970c60e`.
+- Original license: GPL-2.0-only. Copyright (C) 2001 Deep Blue Solutions Ltd.; Copyright (C) 2012 ARM Ltd.
+- Modifications: retain only the CTR-derived D-cache line loop in `flush_icache_range`; inline line-size discovery, remove user fault fixups, and replace the per-address I-cache loop with local `IC IALLU` to cover the distinct load/execute aliases on one CPU. Add an empty-range return.
+- Compatibility decision: retain upstream notices and GPL-2.0-only, not relicensed as project code.
+- TLB barriers in [mmu.c](../mm/mmu.c) follow `arch/arm64/include/asm/tlbflush.h` at the same revision; only the architecture-defined barrier/TLBI sequence remains, without Linux's SMP, ASID, or range machinery.
 
 ## String Alignment References (No Imported Code)
 

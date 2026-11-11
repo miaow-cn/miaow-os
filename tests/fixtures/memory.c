@@ -164,8 +164,8 @@ static void check_translation(uintptr_t address, uint64_t descriptor)
 		CHECK((result & 1) == !allowed);
 		if (allowed) {
 			CHECK((result & ADDRESS) == (descriptor & ADDRESS));
-			CHECK((result >> 56) == ((descriptor & 0x1c) ? 0x44 : 0));
-			CHECK(((result >> 7) & 3) == 2);
+			CHECK((result >> 56) == ((descriptor & 0x1c) ? 0xff : 0));
+			CHECK(((result >> 7) & 3) == ((descriptor & 0x1c) ? 3 : 2));
 		} else if (descriptor) {
 			CHECK(((result >> 1) & 0x3f) == 0x0f); /* level 3 permission fault */
 		}
@@ -250,6 +250,43 @@ static void walk(uintptr_t root_address, uintptr_t base)
 	}
 }
 
+static void tlb_selftest(void)
+{
+	uintptr_t address = APP_FIRST + APP_SLOT_SIZE - APP_STACK_SIZE;
+	uint64_t *root = __va(read_sysreg(ttbr0_el1));
+	uint64_t *middle = __va(root[(address >> 30) & 511] & ADDRESS);
+	uint64_t *leaf = __va(middle[(address >> 21) & 511] & ADDRESS);
+	volatile uint64_t *entry = &leaf[(address >> 12) & 511];
+	uint64_t saved = *entry;
+	uint64_t replacement = saved + PAGE_SIZE;
+	volatile uint64_t *first = __va(address);
+	volatile uint64_t *second = __va(address + PAGE_SIZE);
+	uint64_t first_saved = *first;
+	uint64_t second_saved = *second;
+	volatile uint64_t *user = (void *)address;
+
+	*first = 0x1234;
+	*second = 0x5678;
+	CHECK(*user == 0x1234);
+	check_translation(address, saved);
+	*entry = 0;
+	flush_tlb_all();
+	check_translation(address, 0);
+	*entry = replacement;
+	flush_tlb_all();
+	CHECK(*user == 0x5678);
+	check_translation(address, replacement);
+	*entry = 0;
+	flush_tlb_all();
+	*entry = saved;
+	flush_tlb_all();
+	CHECK(*user == 0x1234);
+	check_translation(address, saved);
+	*first = first_saved;
+	*second = second_saved;
+	printk("TLB SELFTEST OK\n");
+}
+
 static void mmu_selftest(void)
 {
 	static const uintptr_t holes[] = {
@@ -294,6 +331,7 @@ static void mmu_selftest(void)
 	for (unsigned i = 0; i < sizeof(holes) / sizeof(holes[0]); i++) {
 		check_translation(holes[i], 0);
 	}
+	tlb_selftest();
 	printk("MMU TCR=%016lx MAIR=%016lx TTBR0=%016lx TTBR1=%016lx tables=%016lx-%016lx\n", read_sysreg(tcr_el1),
 	       read_sysreg(mair_el1), user_pg_dir, swapper_pg_dir, low, high + PAGE_SIZE);
 	printk("MMU SELFTEST OK ram=%u device=%u user=%u\n", ram_pages, device_pages, user_pages);

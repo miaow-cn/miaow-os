@@ -31,16 +31,23 @@ typedef uint64_t pgprot_t;
 #define PTE_PXN          (1UL << 53)
 #define PTE_UXN          (1UL << 54)
 #define MT_DEVICE_nGnRnE 0
-#define MT_NORMAL_NC     1
+#define MT_NORMAL        1
 #define MAIR(attr, mt)   ((uint64_t)(attr) << ((mt) * 8))
 
-/* Linux's arm64 protections without nG, DBM and software bits; RAM stays non-cacheable for now. */
+#define TCR_TxSZ(bits) (((64UL - (bits)) << 16) | (64UL - (bits)))
+#define TCR_IRGN_WBWA  ((1UL << 8) | (1UL << 24))
+#define TCR_ORGN_WBWA  ((1UL << 10) | (1UL << 26))
+#define TCR_SHARED     ((3UL << 12) | (3UL << 28))
+#define TCR_TG0_4K     (0UL << 14)
+#define TCR_TG1_4K     (2UL << 30)
+
+/* Linux's arm64 protections without nG, DBM and software bits. */
 #define PROT_DEFAULT       (PTE_TYPE_PAGE | PTE_AF | PTE_SHARED)
 #define PROT_DEVICE_nGnRnE (PROT_DEFAULT | PTE_PXN | PTE_UXN | PTE_ATTRINDX(MT_DEVICE_nGnRnE))
-#define PROT_NORMAL_NC     (PROT_DEFAULT | PTE_PXN | PTE_UXN | PTE_ATTRINDX(MT_NORMAL_NC))
-#define _PAGE_DEFAULT      (PROT_DEFAULT | PTE_ATTRINDX(MT_NORMAL_NC))
+#define PROT_NORMAL        (PROT_DEFAULT | PTE_PXN | PTE_UXN | PTE_ATTRINDX(MT_NORMAL))
+#define _PAGE_DEFAULT      (PROT_DEFAULT | PTE_ATTRINDX(MT_NORMAL))
 
-#define PAGE_KERNEL        PROT_NORMAL_NC
+#define PAGE_KERNEL        PROT_NORMAL
 #define PAGE_KERNEL_RO     (PAGE_KERNEL | PTE_RDONLY)
 #define PAGE_KERNEL_ROX    ((PAGE_KERNEL & ~PTE_PXN) | PTE_RDONLY)
 #define PAGE_SHARED        (_PAGE_DEFAULT | PTE_USER | PTE_PXN | PTE_UXN)
@@ -72,7 +79,7 @@ typedef uint64_t pgprot_t;
  * | 0xffffff8008000000..0xffffff800800ffff | 0x08000000..0x0800ffff | GICD       |   rw-   | nGnRnE        |
  * | 0xffffff80080a0000..0xffffff80080bffff | 0x080a0000..0x080bffff | GICR + SGI |   rw-   | nGnRnE        |
  * | 0xffffff8009000000..0xffffff8009000fff | 0x09000000..0x09000fff | PL011      |   rw-   | nGnRnE        |
- * | 0xffffffc000000000..0xffffffc007ffffff | 0x40000000..0x47ffffff | linear map |   rw-   | in, out+in nc |
+ * | 0xffffffc000000000..0xffffffc007ffffff | 0x40000000..0x47ffffff | linear map |   rw-   | in, wb ra wa  |
  * |   _text.._etext                        |   0x40080000..         |   text     |   r-x   |               |
  * |   __start_rodata..__end_rodata         |                        |   rodata   |   r--   |               |
  * +----------------------------------------+------------------------+------------+---------+---------------+
@@ -112,8 +119,8 @@ static alignas(PAGE_SIZE) uint64_t early_pgtables[EARLY_PGTABLES][PTRS_PER_PTE];
 static unsigned early_pgtables_used;
 
 /*
- * All but cpu_uninstall_idmap() run with the MMU off: PC-relative symbol addresses are
- * physical, and a table's physical address is also a pointer to it.
+ * Table construction runs with the MMU off: PC-relative symbol addresses are physical,
+ * and a table's physical address is also a pointer to it.
  */
 static uintptr_t early_pgtable_alloc(void)
 {
@@ -138,7 +145,8 @@ static uintptr_t early_pgtable_alloc(void)
  * UXNTable: Hierarchical control of the EL0 execute-never permission.
  * PXNTable: Hierarchical control of the EL1 execute-never permission.
  * next-level PA: The PA the next level table locates at. mmu_init() configures TCR_EL1.IPS
- *     to 32-bit PA, PA[47:32] must be 0. Type: 0b11 for table descriptor
+ *     to 32-bit PA, PA[47:32] must be 0.
+ * Type: 0b11 for table descriptor
  *
  * Table descriptors leave all hierarchical controls at 0: permissions come from pages only.
  */
@@ -222,6 +230,17 @@ static void map_kernel_segment(const char *start, const char *end, pgprot_t prot
 	create_pgd_mapping(swapper_pg_dir, (uintptr_t)start, (uintptr_t)__va(start), (size_t)(end - start), prot);
 }
 
+void flush_tlb_all(void)
+{
+	__asm__ volatile("dsb ishst\n\t"
+			 "tlbi vmalle1\n\t"
+			 "dsb ish\n\t"
+			 "isb"
+			 :
+			 :
+			 : "memory");
+}
+
 void mmu_init(void)
 {
 	create_pgd_mapping(swapper_pg_dir, PHYS_OFFSET, PAGE_OFFSET, RAM_SIZE, PAGE_KERNEL);
@@ -243,11 +262,11 @@ void mmu_init(void)
 
 	__asm__ volatile("dsb sy" : : : "memory");
 
-	write_sysreg(MAIR(0x00, MT_DEVICE_nGnRnE) | MAIR(0x44, MT_NORMAL_NC), mair_el1);
+	write_sysreg(MAIR(0x00, MT_DEVICE_nGnRnE) | MAIR(0xff, MT_NORMAL), mair_el1);
 
 	/*
 	 * 64 - 25 = 39 bits of VA in each of TTBR0 and TTBR1
-	 * TTBR0 and TTBR1 page tables: Normal memory, Inner+Outer Non-cacheable, Inner shareable,
+	 * TTBR0 and TTBR1 page tables: Normal Inner+Outer Write-Back Read/Write-Allocate, Inner shareable,
 	 *     4KB page; current ASID is from TTBR0
 	 * EPD0 = EPD1 = 0: both halves are walked.
 	 * TBI0 = TBI1 = 0: no top-byte ignore.
@@ -257,25 +276,25 @@ void mmu_init(void)
 	 *     addresses are below 4 GB, so 32-bit output is sufficient
 	 * ASID: 8-bit
 	 */
-	write_sysreg(25UL | (3UL << 12) | (25UL << 16) | (3UL << 28) | (2UL << 30), tcr_el1);
+	write_sysreg(TCR_TxSZ(39) | TCR_IRGN_WBWA | TCR_ORGN_WBWA | TCR_SHARED | TCR_TG0_4K | TCR_TG1_4K, tcr_el1);
 
 	/* 4 KB-aligned base: bits 11:0 are zero, so CnP (bit 0) is clear
 	 * and ASID (bits 63:48) stays 0. */
 	write_sysreg((uintptr_t)idmap_pg_dir, ttbr0_el1);
 	write_sysreg((uintptr_t)swapper_pg_dir, ttbr1_el1);
 
-	/* invalidate TLB */
-	__asm__ volatile("isb\n\t"
-			 "tlbi vmalle1\n\t"
+	__asm__ volatile("isb" : : : "memory");
+	flush_tlb_all();
+	__asm__ volatile("ic iallu\n\t"
 			 "dsb sy\n\t"
 			 "isb"
 			 :
 			 :
 			 : "memory");
 
-	/* enable MMU, disable align check, disable data & instruction cache; WXN stays clear as
+	/* enable MMU and data/instruction caches, disable align check; WXN stays clear as
 	 * in Linux, since no page is both writable and executable anyway */
-	write_sysreg((read_sysreg(sctlr_el1) & ~((1UL << 1) | (1UL << 2) | (1UL << 12) | (1UL << 19))) | 1UL,
+	write_sysreg((read_sysreg(sctlr_el1) & ~((1UL << 1) | (1UL << 19))) | 1UL | (1UL << 2) | (1UL << 12),
 		     sctlr_el1);
 	__asm__ volatile("isb" : : : "memory");
 }
@@ -284,11 +303,6 @@ void mmu_init(void)
 void cpu_uninstall_idmap(void)
 {
 	write_sysreg(__pa(user_pg_dir), ttbr0_el1);
-	__asm__ volatile("isb\n\t"
-			 "tlbi vmalle1\n\t"
-			 "dsb sy\n\t"
-			 "isb"
-			 :
-			 :
-			 : "memory");
+	__asm__ volatile("isb" : : : "memory");
+	flush_tlb_all();
 }

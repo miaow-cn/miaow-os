@@ -127,6 +127,7 @@ struct pt_regs *trap(struct pt_regs *regs, uint64_t irq)
 				kernel_panic();
 			}
 		}
+		flush_icache_range((uintptr_t)destination, (uintptr_t)destination + task->size);
 		memset(__va(task->stack_bottom), 0, APP_STACK_SIZE);
 		task->regs.pc = task->image;
 		task->regs.sp = task->stack_top;
@@ -134,7 +135,6 @@ struct pt_regs *trap(struct pt_regs *regs, uint64_t irq)
 		task->runnable = true;
 		printk("LOADED app=%u image=%016lx stack=%016lx copy=OK\n", i, task->image, task->stack_top);
 	}
-	__asm__ volatile("dsb sy\n\tisb" : : : "memory");
 	timer_init();
 	enter_app(&tasks[0].regs);
 }
