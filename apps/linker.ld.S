@@ -29,5 +29,5 @@ SECTIONS
 	.debug_rnglists 0 : { *(.debug_rnglists) }
 	.debug_loclists 0 : { *(.debug_loclists) }
 	.debug_frame 0 : { *(.debug_frame) }
-	/DISCARD/ : { *(.comment .note* .eh_frame*) }
+	/DISCARD/ : { *(.comment .note* .eh_frame* .ARM.attributes) }
 }

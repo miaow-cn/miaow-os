@@ -7,32 +7,9 @@
 #include "kernel.h"
 #include "abi.h"
 
-typedef uint64_t pgd_t;
-typedef uint64_t pmd_t;
-typedef uint64_t pte_t;
-typedef uint64_t pgprot_t;
+#include <miaow/pgtable.h>
 
-#define PTRS_PER_PGD     512
-#define PTRS_PER_PMD     512
-#define PTRS_PER_PTE     512
-#define PGDIR_SHIFT      30
-#define PMD_SHIFT        21
-#define pgd_index(addr)  (((uintptr_t)(addr) >> PGDIR_SHIFT) & (PTRS_PER_PGD - 1))
-#define pmd_index(addr)  (((uintptr_t)(addr) >> PMD_SHIFT) & (PTRS_PER_PMD - 1))
-#define pte_index(addr)  (((uintptr_t)(addr) >> PAGE_SHIFT) & (PTRS_PER_PTE - 1))
-#define PTE_ADDR_MASK    0x0000fffffffff000UL
-#define PMD_TYPE_TABLE   3UL
-#define PTE_TYPE_PAGE    3UL
-#define PTE_ATTRINDX(t)  ((uint64_t)(t) << 2)
-#define PTE_USER         (1UL << 6) /* AP[1] */
-#define PTE_RDONLY       (1UL << 7) /* AP[2] */
-#define PTE_SHARED       (3UL << 8)
-#define PTE_AF           (1UL << 10)
-#define PTE_PXN          (1UL << 53)
-#define PTE_UXN          (1UL << 54)
-#define MT_DEVICE_nGnRnE 0
-#define MT_NORMAL        1
-#define MAIR(attr, mt)   ((uint64_t)(attr) << ((mt) * 8))
+#define MAIR(attr, mt) ((uint64_t)(attr) << ((mt) * 8))
 
 #define TCR_TxSZ(bits) (((64UL - (bits)) << 16) | (64UL - (bits)))
 #define TCR_IRGN_WBWA  ((1UL << 8) | (1UL << 24))
@@ -40,18 +17,6 @@ typedef uint64_t pgprot_t;
 #define TCR_SHARED     ((3UL << 12) | (3UL << 28))
 #define TCR_TG0_4K     (0UL << 14)
 #define TCR_TG1_4K     (2UL << 30)
-
-/* Linux's arm64 protections without nG, DBM and software bits. */
-#define PROT_DEFAULT       (PTE_TYPE_PAGE | PTE_AF | PTE_SHARED)
-#define PROT_DEVICE_nGnRnE (PROT_DEFAULT | PTE_PXN | PTE_UXN | PTE_ATTRINDX(MT_DEVICE_nGnRnE))
-#define PROT_NORMAL        (PROT_DEFAULT | PTE_PXN | PTE_UXN | PTE_ATTRINDX(MT_NORMAL))
-#define _PAGE_DEFAULT      (PROT_DEFAULT | PTE_ATTRINDX(MT_NORMAL))
-
-#define PAGE_KERNEL        PROT_NORMAL
-#define PAGE_KERNEL_RO     (PAGE_KERNEL | PTE_RDONLY)
-#define PAGE_KERNEL_ROX    ((PAGE_KERNEL & ~PTE_PXN) | PTE_RDONLY)
-#define PAGE_SHARED        (_PAGE_DEFAULT | PTE_USER | PTE_PXN | PTE_UXN)
-#define PAGE_READONLY_EXEC (_PAGE_DEFAULT | PTE_USER | PTE_RDONLY | PTE_PXN)
 
 /* L2 and L3 tables: IO (1 + 2), linear map (1 + one per 2 MiB of RAM), app slots (1 + 1). */
 #define EARLY_PGTABLES (6 + (RAM_SIZE >> PMD_SHIFT))
@@ -238,6 +203,21 @@ void flush_tlb_all(void)
 			 "isb"
 			 :
 			 :
+			 : "memory");
+}
+
+/*
+ * Callers change only leaf entries, so VALE1 keeps cached L1/L2 entries. It also matches
+ * global entries, which all user pages are until ASIDs exist.
+ */
+void flush_tlb_page(uintptr_t addr)
+{
+	__asm__ volatile("dsb ishst\n\t"
+			 "tlbi vale1, %0\n\t"
+			 "dsb ish\n\t"
+			 "isb"
+			 :
+			 : "r"(addr >> PAGE_SHIFT)
 			 : "memory");
 }
 

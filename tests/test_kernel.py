@@ -502,6 +502,15 @@ class KernelTests(unittest.TestCase):
         host("kmalloc", "lib/string.c", "mm/page_alloc.c", "mm/slab.c",
              "tests/fixtures/kmalloc.c")
 
+    @verifies("REQ-MM-008")
+    def test_runtime_page_tables(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build(directory, target="memory_test_image")
+            output = emulate(Path(directory) / "memory_test.bin", "ALL APPS DONE\n")
+        self.assertNotIn("PANIC", output)
+        self.assertNotIn("FAIL", output)
+        self.assertIn("PGTABLE SELFTEST OK\n", output)
+
     @verifies("REQ-MM-001", "REQ-MM-002", "REQ-MM-003", "REQ-PRINT-001", "REQ-MM-004", "REQ-MM-005", "REQ-MM-007")
     def test_memory_map_and_allocators(self):
         with tempfile.TemporaryDirectory() as directory:

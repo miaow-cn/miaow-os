@@ -82,7 +82,15 @@ Before enabling caches, `IC IALLU; DSB SY; ISB` removes stale local instructions
 
 `flush_tlb_all()` publishes table stores with `DSB ISHST`, invalidates local EL1/EL0 translations with `TLBI VMALLE1`, then completes with `DSB ISH; ISB`. Production tables are built with translation off; TTBR0 replacement also performs this synchronization.
 
-The memory fixture exercises a live leaf replacement with break-before-make and real data reads. No general runtime mapping API, ASIDs, or SMP shootdowns are provided. GDB tests trace executed cache/TLB maintenance and cache-line coverage. `test_cache_configuration` checks the cache attributes, enable bits, and live leaf update; `test_application_cache_synchronization` traces startup maintenance and application copies. Boot and identity-mapping tests check execution level and translation independently of cache policy.
+The memory fixture exercises a live leaf replacement with break-before-make and real data reads. ASIDs and SMP shootdowns are not provided. GDB tests trace executed cache/TLB maintenance and cache-line coverage. `test_cache_configuration` checks the cache attributes, enable bits, and live leaf update; `test_application_cache_synchronization` traces startup maintenance and application copies. Boot and identity-mapping tests check execution level and translation independently of cache policy.
+
+### Runtime Page Tables
+
+[memory.c](../mm/memory.c) edits tables after boot (`REQ-MM-008`); shared types and protections are in [pgtable.h](../include/miaow/pgtable.h). Tables are zeroed buddy pages accessed through `__va()`; descriptors hold physical addresses. Nothing in the demo uses it yet.
+
+- `pgd_alloc()`/`pgd_free()`: root of a `struct mm_struct` (only `pgd` so far). `pgd_free()` frees the whole table tree but not mapped pages; the root must not be live.
+- `pte_alloc()`: walks to the leaf, adding missing L2/L3 tables; null on allocation failure.
+- `set_pte_at()`/`pte_clear()`: a valid leaf is cleared and flushed with `flush_tlb_page()` before it changes (break-before-make).
 
 ## Follow the Execution
 

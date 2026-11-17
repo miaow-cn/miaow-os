@@ -47,6 +47,7 @@ bool timer_interrupt(void);
 void mmu_init(void);
 void cpu_uninstall_idmap(void);
 void flush_tlb_all(void);
+void flush_tlb_page(uintptr_t addr);
 void flush_icache_range(uintptr_t start, uintptr_t end);
 void mem_init(void);
 

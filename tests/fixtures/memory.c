@@ -5,6 +5,7 @@
 #include "abi.h"
 #include <miaow/memblock.h>
 #include <miaow/mm.h>
+#include <miaow/pgtable.h>
 #include <miaow/slab.h>
 
 void string_selftest(unsigned char *end);
@@ -337,11 +338,65 @@ static void mmu_selftest(void)
 	printk("MMU SELFTEST OK ram=%u device=%u user=%u\n", ram_pages, device_pages, user_pages);
 }
 
+/* Maps, remaps, and unmaps one page in a fresh, live TTBR0 root. */
+static void pgtable_selftest(void)
+{
+	const uintptr_t address = 0x400000;
+	unsigned long baseline = nr_free_pages();
+	uintptr_t saved = read_sysreg(ttbr0_el1);
+	volatile uint64_t *user = (void *)address;
+	struct mm_struct mm;
+	struct page *pages[2] = {alloc_pages(0), alloc_pages(0)};
+	uint64_t first;
+	uint64_t second;
+
+	mm.pgd = pgd_alloc(&mm);
+	CHECK(mm.pgd && pages[0] && pages[1]);
+	CHECK(nr_free_pages() == baseline - 3);
+	for (unsigned i = 0; i < 512; i++) {
+		CHECK(mm.pgd[i] == 0);
+	}
+	pte_t *ptep = pte_alloc(&mm, address);
+	CHECK(ptep && *ptep == 0);
+	CHECK(nr_free_pages() == baseline - 5);
+	uint64_t *middle = __va(mm.pgd[(address >> 30) & 511] & ADDRESS);
+	CHECK((mm.pgd[(address >> 30) & 511] & 0xfff) == 3 && (middle[(address >> 21) & 511] & 0xfff) == 3);
+	CHECK((uint64_t *)__va(middle[(address >> 21) & 511] & ADDRESS) + ((address >> 12) & 511) == ptep);
+	CHECK(pte_alloc(&mm, address + PAGE_SIZE) == ptep + 1);
+	CHECK(nr_free_pages() == baseline - 5);
+
+	*(volatile uint64_t *)page_address(pages[0]) = 0x1111;
+	*(volatile uint64_t *)page_address(pages[1]) = 0x2222;
+	write_sysreg(__pa(mm.pgd), ttbr0_el1);
+	flush_tlb_all();
+	CHECK(((translation(address, 0) >> 1) & 0x3f) == 0x07);
+	first = page_to_phys(pages[0]) | NORMAL | USER | PXN | UXN;
+	set_pte_at(&mm, address, ptep, first);
+	CHECK(*user == 0x1111);
+	check_translation(address, first);
+	second = page_to_phys(pages[1]) | NORMAL | USER | RDONLY | PXN;
+	set_pte_at(&mm, address, ptep, second);
+	CHECK(*ptep == second && *user == 0x2222);
+	check_translation(address, second);
+	pte_clear(&mm, address, ptep);
+	CHECK(*ptep == 0);
+	CHECK(((translation(address, 0) >> 1) & 0x3f) == 0x07);
+	write_sysreg(saved, ttbr0_el1);
+	flush_tlb_all();
+
+	__free_pages(pages[0], 0);
+	__free_pages(pages[1], 0);
+	pgd_free(&mm, mm.pgd);
+	CHECK(nr_free_pages() == baseline);
+	printk("PGTABLE SELFTEST OK\n");
+}
+
 void __wrap_mem_init(void)
 {
 	__real_mem_init();
 	mmu_selftest();
 	mem_selftest();
+	pgtable_selftest();
 }
 
 [[noreturn]] void __wrap_start_kernel(void)

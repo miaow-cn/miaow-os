@@ -219,3 +219,14 @@ acceptance = [
     "Invalidate the local instruction cache with completion and instruction barriers before enabling it; after each application copy, clean every intersecting D-cache line to PoU using CTR_EL0.DminLine, complete the clean, invalidate all local I-cache aliases, and complete synchronization before entering EL0.",
     "Publish table writes before local TLBI VMALLE1 with DSB ISHST, then complete it with DSB ISH and ISB; replacing TTBR0 removes the boot identity mapping, and a cached valid-to-invalid-to-valid leaf update observes each new translation after synchronization."
 ]
+
+[[requirements]]
+id = "REQ-MM-008"
+title = "Edit page tables at run time"
+statement = "The kernel shall build, change, and free TTBR0 page tables after boot using tables from the page allocator."
+status = "implemented"
+acceptance = [
+    "pgd_alloc returns a zeroed root page; pte_alloc adds each missing zeroed L2/L3 table once, linked by physical address, and reuses existing tables.",
+    "On a live root, set_pte_at replacing a cached valid leaf uses break-before-make, and the VA then reads the new page with the new permissions; pte_clear leaves a level 3 translation fault.",
+    "pgd_free releases the root and all its L2/L3 tables; after the leaf pages are freed, nr_free_pages equals its baseline.",
+]

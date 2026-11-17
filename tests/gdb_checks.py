@@ -9,7 +9,10 @@ PHYS_OFFSET = 0x40000000
 
 def value(expression):
     # GDB types x0-x30 as signed long; high kernel addresses must compare unsigned.
-    return int(gdb.parse_and_eval(expression)) & 0xffffffffffffffff
+    result = gdb.parse_and_eval(expression)
+    if expression == "$SCTLR" and result.type.code == gdb.TYPE_CODE_VOID:
+        result = gdb.parse_and_eval("$SCTLR_EL1")
+    return int(result) & 0xffffffffffffffff
 
 
 def physical(symbol):

@@ -42,5 +42,5 @@ SECTIONS
 	} :data
 	_end = .;
 	ASSERT(. - PAGE_OFFSET + PHYS_OFFSET <= APP_FIRST, "Kernel overlaps application slots")
-	/DISCARD/ : { *(.comment .note* .eh_frame*) }
+	/DISCARD/ : { *(.comment .note* .eh_frame* .ARM.attributes) }
 }

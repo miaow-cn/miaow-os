@@ -11,7 +11,7 @@ See [Architecture](docs/architecture.md) for the execution path, address map, AB
 Requires CMake 3.21+, a C23-capable AArch64 GCC/binutils, QEMU with Cortex-A710 and `virt-10.1` support, a C23-capable host `cc` for the scheduler test, and Python 3.11+ with `venv`. The examples use Ninja; dropping `-G Ninja` selects the default Make generator instead. The full test suite also requires an AArch64-capable GDB with Python support. On Fedora, missing tools can be installed manually with
 
 ```sh
-sudo dnf install cmake ninja-build gcc gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu qemu-system-aarch64 gdb
+sudo dnf install cmake ninja-build gcc gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu qemu-system-aarch64 gdb ccache
 ```
 
 Set up the Python virtual environment from the repository root:
