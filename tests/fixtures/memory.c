@@ -108,7 +108,7 @@ static const struct {
 	uintptr_t size;
 } mapped[] = {
 	{PAGE_OFFSET, RAM_SIZE},          {IO_ADDRESS(0x08000000), 0x10000},      {IO_ADDRESS(0x080a0000), 0x20000},
-	{IO_ADDRESS(0x09000000), 0x1000}, {APP_FIRST, APP_COUNT * APP_SLOT_SIZE},
+	{IO_ADDRESS(0x09000000), 0x1000},
 };
 
 static bool overlaps(uintptr_t start, uintptr_t size)
@@ -128,8 +128,6 @@ static bool inside(uintptr_t address, const void *start, const void *end)
 
 static uint64_t expected(uintptr_t address)
 {
-	uintptr_t offset = (address - APP_FIRST) % APP_SLOT_SIZE;
-
 	if (address - PAGE_OFFSET < RAM_SIZE) {
 		if (inside(address, _text, _etext)) {
 			return __pa(address) | NORMAL | RDONLY | UXN;
@@ -138,15 +136,6 @@ static uint64_t expected(uintptr_t address)
 			return __pa(address) | NORMAL | RDONLY | PXN | UXN;
 		}
 		return __pa(address) | NORMAL | PXN | UXN;
-	}
-	if (address - APP_FIRST < APP_COUNT * APP_SLOT_SIZE) {
-		if (offset < APP_IMAGE_SIZE) {
-			return address | NORMAL | USER | RDONLY | PXN;
-		}
-		if (offset >= APP_SLOT_SIZE - APP_STACK_SIZE) {
-			return address | NORMAL | USER | PXN | UXN;
-		}
-		return 0;
 	}
 	if (overlaps(address, PAGE_SIZE)) {
 		return (address - IO_OFFSET) | DEVICE | PXN | UXN;
@@ -184,7 +173,7 @@ static void check_wx(uint64_t descriptor)
 	CHECK(!writable || !inside(physical, (void *)__pa(_text), (void *)__pa(__end_rodata)));
 }
 
-#define TABLES 72
+#define TABLES 70
 
 static uintptr_t tables[TABLES];
 static unsigned table_count;
@@ -251,43 +240,6 @@ static void walk(uintptr_t root_address, uintptr_t base)
 	}
 }
 
-static void tlb_selftest(void)
-{
-	uintptr_t address = APP_FIRST + APP_SLOT_SIZE - APP_STACK_SIZE;
-	uint64_t *root = __va(read_sysreg(ttbr0_el1));
-	uint64_t *middle = __va(root[(address >> 30) & 511] & ADDRESS);
-	uint64_t *leaf = __va(middle[(address >> 21) & 511] & ADDRESS);
-	volatile uint64_t *entry = &leaf[(address >> 12) & 511];
-	uint64_t saved = *entry;
-	uint64_t replacement = saved + PAGE_SIZE;
-	volatile uint64_t *first = __va(address);
-	volatile uint64_t *second = __va(address + PAGE_SIZE);
-	uint64_t first_saved = *first;
-	uint64_t second_saved = *second;
-	volatile uint64_t *user = (void *)address;
-
-	*first = 0x1234;
-	*second = 0x5678;
-	CHECK(*user == 0x1234);
-	check_translation(address, saved);
-	*entry = 0;
-	flush_tlb_all();
-	check_translation(address, 0);
-	*entry = replacement;
-	flush_tlb_all();
-	CHECK(*user == 0x5678);
-	check_translation(address, replacement);
-	*entry = 0;
-	flush_tlb_all();
-	*entry = saved;
-	flush_tlb_all();
-	CHECK(*user == 0x1234);
-	check_translation(address, saved);
-	*first = first_saved;
-	*second = second_saved;
-	printk("TLB SELFTEST OK\n");
-}
-
 static void mmu_selftest(void)
 {
 	static const uintptr_t holes[] = {
@@ -295,8 +247,12 @@ static void mmu_selftest(void)
 		PHYS_OFFSET,
 		PHYS_OFFSET + TEXT_OFFSET,
 		PHYS_OFFSET + RAM_SIZE - PAGE_SIZE,
-		APP_FIRST - PAGE_SIZE,
-		APP_FIRST + APP_COUNT * APP_SLOT_SIZE,
+		APP_LOAD_ADDR - PAGE_SIZE,
+		APP_LOAD_ADDR,
+		STACK_TOP - PAGE_SIZE,
+		0x41000000,
+		0x41020000,
+		0x41040000,
 		0x08000000,
 		0x09000000,
 		1UL << 39,
@@ -311,12 +267,12 @@ static void mmu_selftest(void)
 		IO_ADDRESS(0x09000000 - PAGE_SIZE),
 		IO_ADDRESS(0x09001000),
 	};
-	uintptr_t user_pg_dir = read_sysreg(ttbr0_el1);
+	uintptr_t reserved_pg_dir = read_sysreg(ttbr0_el1);
 	uintptr_t swapper_pg_dir = read_sysreg(ttbr1_el1);
 	CHECK(!((uintptr_t)_etext % PAGE_SIZE) && !((uintptr_t)__end_rodata % PAGE_SIZE));
 	CHECK(inside((uintptr_t)start_kernel, _text, _etext));
 	CHECK(inside((uintptr_t)holes, __start_rodata, __end_rodata));
-	walk(user_pg_dir, 0);
+	walk(reserved_pg_dir, 0);
 	walk(swapper_pg_dir, 0xffffff8000000000UL);
 	CHECK(table_count == TABLES);
 	uintptr_t low = tables[0];
@@ -332,9 +288,8 @@ static void mmu_selftest(void)
 	for (unsigned i = 0; i < sizeof(holes) / sizeof(holes[0]); i++) {
 		check_translation(holes[i], 0);
 	}
-	tlb_selftest();
 	printk("MMU TCR=%016lx MAIR=%016lx TTBR0=%016lx TTBR1=%016lx tables=%016lx-%016lx\n", read_sysreg(tcr_el1),
-	       read_sysreg(mair_el1), user_pg_dir, swapper_pg_dir, low, high + PAGE_SIZE);
+	       read_sysreg(mair_el1), reserved_pg_dir, swapper_pg_dir, low, high + PAGE_SIZE);
 	printk("MMU SELFTEST OK ram=%u device=%u user=%u\n", ram_pages, device_pages, user_pages);
 }
 
@@ -375,6 +330,22 @@ static void pgtable_selftest(void)
 	CHECK(*user == 0x1111);
 	check_translation(address, first);
 	second = page_to_phys(pages[1]) | NORMAL | USER | RDONLY | PXN;
+
+	*ptep = 0;
+	flush_tlb_all();
+	check_translation(address, 0);
+	*ptep = second;
+	flush_tlb_all();
+	CHECK(*user == 0x2222);
+	check_translation(address, second);
+	*ptep = 0;
+	flush_tlb_all();
+	*ptep = first;
+	flush_tlb_all();
+	CHECK(*user == 0x1111);
+	check_translation(address, first);
+	printk("TLB SELFTEST OK\n");
+
 	set_pte_at(&mm, address, ptep, second);
 	CHECK(*ptep == second && *user == 0x2222);
 	check_translation(address, second);

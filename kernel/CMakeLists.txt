@@ -14,8 +14,7 @@ add_custom_command(
     COMMAND "${CMAKE_C_COMPILER}" -E -P -x c
             "-I${PROJECT_SOURCE_DIR}/include"
             "${CMAKE_CURRENT_SOURCE_DIR}/linker.ld.S" -o "${KERNEL_LINKER}"
-    DEPENDS linker.ld.S "${PROJECT_SOURCE_DIR}/include/abi.h"
-            "${PROJECT_SOURCE_DIR}/include/miaow/memory.h"
+    DEPENDS linker.ld.S "${PROJECT_SOURCE_DIR}/include/miaow/memory.h"
     VERBATIM
 )
 add_custom_target(kernel_linker DEPENDS "${KERNEL_LINKER}")

@@ -9,11 +9,10 @@
 ENTRY(_start)
 SECTIONS
 {
-	APP_BASE = APP_FIRST + APP_INDEX * APP_SLOT_SIZE;
-	. = APP_BASE;
+	. = APP_LOAD_ADDR;
 	.text : { KEEP(*(.text.start)) *(.text .text.*) }
 	.rodata : { *(.rodata .rodata.*) }
-	ASSERT(. - APP_BASE <= APP_IMAGE_SIZE, "Application image exceeds slot")
+	ASSERT(. - APP_LOAD_ADDR <= APP_IMAGE_SIZE, "Application image exceeds limit")
 	.forbidden : {
 		*(.data .data.* .bss .bss.* COMMON .sdata* .sbss*)
 		*(.tdata* .tbss* .init* .fini* .ctors* .dtors* .got* .dynamic .dynsym .dynstr)

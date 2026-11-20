@@ -10,8 +10,11 @@
 #include "context.h"
 #include "abi.h"
 
+struct mm_struct;
+
 struct task_struct {
 	struct pt_regs regs;
+	struct mm_struct *mm;
 	uintptr_t image;
 	size_t size;
 	uintptr_t stack_bottom;

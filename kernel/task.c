@@ -7,6 +7,10 @@
 #include "kernel.h"
 #include "task.h"
 
+#include <miaow/mm.h>
+#include <miaow/pgtable.h>
+#include <miaow/slab.h>
+
 extern const unsigned char app0_start[], app0_end[], app1_start[], app1_end[], app2_start[], app2_end[];
 
 static struct task_struct tasks[APP_COUNT];
@@ -25,6 +29,7 @@ static struct pt_regs *schedule(void)
 	int next = next_runnable(tasks, current);
 	if (next >= 0) {
 		current = (unsigned)next;
+		switch_mm(tasks[current].mm);
 		timer_rearm();
 		return &tasks[next].regs;
 	}
@@ -104,31 +109,68 @@ struct pt_regs *trap(struct pt_regs *regs, uint64_t irq)
 	return &task->regs;
 }
 
+static void *map_app_page(struct mm_struct *mm, uintptr_t address, pgprot_t prot)
+{
+	struct page *page = alloc_pages(0);
+	if (!page) {
+		printk("PANIC: cannot allocate app page at %016lx\n", address);
+		kernel_panic();
+	}
+	pte_t *pte = pte_alloc(mm, address);
+	if (!pte) {
+		__free_pages(page, 0);
+		printk("PANIC: cannot allocate app page table at %016lx\n", address);
+		kernel_panic();
+	}
+	if (*pte) {
+		printk("PANIC: duplicate app mapping at %016lx\n", address);
+		kernel_panic();
+	}
+	void *destination = memset(page_address(page), 0, PAGE_SIZE);
+	set_pte_at(mm, address, pte, page_to_phys(page) | prot);
+	return destination;
+}
+
 [[noreturn]] void start_apps(void)
 {
 	const unsigned char *starts[] = {app0_start, app1_start, app2_start};
 	const unsigned char *ends[] = {app0_end, app1_end, app2_end};
 	for (unsigned i = 0; i < APP_COUNT; i++) {
 		struct task_struct *task = &tasks[i];
-		task->image = APP_FIRST + i * APP_SLOT_SIZE;
+		task->image = APP_LOAD_ADDR;
 		task->size = (uintptr_t)ends[i] - (uintptr_t)starts[i];
-		task->stack_top = task->image + APP_SLOT_SIZE;
+		task->stack_top = STACK_TOP;
 		task->stack_bottom = task->stack_top - APP_STACK_SIZE;
 		if (!task->size || task->size > APP_IMAGE_SIZE || task->image + task->size > task->stack_bottom) {
+			printk("PANIC: invalid app %u image size\n", i);
 			kernel_panic();
 		}
-		/* The compatibility mapping makes the slot's user address its physical address. */
-		volatile unsigned char *destination = __va(task->image);
-		for (size_t offset = 0; offset < task->size; offset++) {
-			destination[offset] = starts[i][offset];
+		task->mm = kzalloc(sizeof(*task->mm));
+		if (!task->mm) {
+			printk("PANIC: cannot allocate app %u address space\n", i);
+			kernel_panic();
 		}
-		for (size_t offset = 0; offset < task->size; offset++) {
-			if (destination[offset] != starts[i][offset]) {
+		task->mm->pgd = pgd_alloc(task->mm);
+		if (!task->mm->pgd) {
+			printk("PANIC: cannot allocate app %u root table\n", i);
+			kernel_panic();
+		}
+		for (size_t offset = 0; offset < task->size; offset += PAGE_SIZE) {
+			size_t bytes = task->size - offset;
+			if (bytes > PAGE_SIZE) {
+				bytes = PAGE_SIZE;
+			}
+			void *destination = map_app_page(task->mm, task->image + offset, PAGE_READONLY_EXEC);
+			memcpy(destination, starts[i] + offset, bytes);
+			if (memcmp(destination, starts[i] + offset, bytes)) {
+				printk("PANIC: app %u image copy failed\n", i);
 				kernel_panic();
 			}
+			flush_icache_range((uintptr_t)destination, (uintptr_t)destination + bytes);
 		}
-		flush_icache_range((uintptr_t)destination, (uintptr_t)destination + task->size);
-		memset(__va(task->stack_bottom), 0, APP_STACK_SIZE);
+		for (uintptr_t address = task->stack_bottom; address < task->stack_top; address += PAGE_SIZE) {
+			map_app_page(task->mm, address, PAGE_SHARED);
+		}
 		task->regs.pc = task->image;
 		task->regs.sp = task->stack_top;
 		task->regs.pstate = 0x340;
@@ -136,5 +178,6 @@ struct pt_regs *trap(struct pt_regs *regs, uint64_t irq)
 		printk("LOADED app=%u image=%016lx stack=%016lx copy=OK\n", i, task->image, task->stack_top);
 	}
 	timer_init();
+	switch_mm(tasks[0].mm);
 	enter_app(&tasks[0].regs);
 }

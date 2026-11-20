@@ -60,5 +60,6 @@ void pgd_free(struct mm_struct *mm, pgd_t *pgd);
 pte_t *pte_alloc(struct mm_struct *mm, uintptr_t addr);
 void set_pte_at(struct mm_struct *mm, uintptr_t addr, pte_t *ptep, pte_t pte);
 void pte_clear(struct mm_struct *mm, uintptr_t addr, pte_t *ptep);
+void switch_mm(struct mm_struct *mm);
 
 #endif /* _PGTABLE_H */

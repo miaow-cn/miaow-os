@@ -4,6 +4,9 @@
 #include "kernel.h"
 #include "abi.h"
 
+#include <miaow/mm.h>
+#include <miaow/pgtable.h>
+
 #define RET 0xd65f03c0u
 
 /* Written by probe_vectors in fault_probe.S. */
@@ -33,6 +36,22 @@ static void probe(const char *name, void (*access)(uintptr_t), uintptr_t address
 [[noreturn]] void __wrap_start_kernel(void)
 {
 	volatile uint32_t stack_ret = RET;
+	struct mm_struct mm = {};
+	struct page *page;
+	pte_t *pte;
+
+	mem_init();
+	mm.pgd = pgd_alloc(&mm);
+	page = alloc_pages(0);
+	pte = mm.pgd ? pte_alloc(&mm, APP_LOAD_ADDR) : nullptr;
+	if (!mm.pgd || !page || !pte) {
+		printk("FAULT SELFTEST FAIL allocation\n");
+		kernel_panic();
+	}
+	*(uint32_t *)page_address(page) = RET;
+	flush_icache_range((uintptr_t)page_address(page), (uintptr_t)page_address(page) + sizeof(uint32_t));
+	set_pte_at(&mm, APP_LOAD_ADDR, pte, page_to_phys(page) | PAGE_READONLY_EXEC);
+	switch_mm(&mm);
 
 	write_sysreg(probe_vectors, vbar_el1);
 	__asm__ volatile("isb" : : : "memory");
@@ -41,8 +60,8 @@ static void probe(const char *name, void (*access)(uintptr_t), uintptr_t address
 	probe("exec-rodata", probe_exec, (uintptr_t)&rodata_ret);
 	probe("exec-data", probe_exec, (uintptr_t)&data_ret);
 	probe("exec-stack", probe_exec, (uintptr_t)&stack_ret);
-	probe("exec-user", probe_exec, APP_FIRST);
-	probe("read-unmapped", probe_read, APP_FIRST + APP_IMAGE_SIZE);
+	probe("exec-user", probe_exec, APP_LOAD_ADDR);
+	probe("read-unmapped", probe_read, APP_LOAD_ADDR + APP_IMAGE_SIZE);
 	write_sysreg(vectors, vbar_el1);
 	__asm__ volatile("isb" : : : "memory");
 

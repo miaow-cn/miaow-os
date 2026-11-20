@@ -28,7 +28,7 @@ foreach(INDEX RANGE 0 2)
     target_link_libraries(app${INDEX} PRIVATE build_options)
     target_include_directories(app${INDEX} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_options(app${INDEX} PRIVATE
-        "LINKER:--orphan-handling=error" "LINKER:--defsym=APP_INDEX=${INDEX}"
+        "LINKER:--orphan-handling=error"
         "LINKER:-T,${APP_LINKER}"
     )
     add_dependencies(app${INDEX} app_linker)

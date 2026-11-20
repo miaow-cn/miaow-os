@@ -144,3 +144,10 @@ void set_pte_at(struct mm_struct *mm, uintptr_t addr, pte_t *ptep, pte_t pte)
 			 :
 			 : "memory");
 }
+
+void switch_mm(struct mm_struct *mm)
+{
+	write_sysreg(__pa(mm->pgd), ttbr0_el1);
+	__asm__ volatile("isb" : : : "memory");
+	flush_tlb_all();
+}

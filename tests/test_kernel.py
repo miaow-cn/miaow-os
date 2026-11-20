@@ -17,7 +17,11 @@ from tests.support import verifies
 ROOT = Path(__file__).resolve().parents[1]
 PAGE_OFFSET = 0xffffffc000000000
 KERNEL_START = PAGE_OFFSET + 0x80000
-KERNEL_LIMIT = PAGE_OFFSET + 0x01000000
+KERNEL_LIMIT = PAGE_OFFSET + 0x08000000
+APP_LOAD_ADDR = 0x400000
+APP_IMAGE_SIZE = 0x10000
+APP_STACK_SIZE = 0x4000
+STACK_TOP = 0x8000000000
 QEMU = [
     "qemu-system-aarch64", "-machine",
     "virt-10.1,gic-version=3,virtualization=off,secure=off,its=off",
@@ -86,7 +90,7 @@ def emulate(image, marker, extra=(), occurrences=1):
     return output.decode(errors="replace")
 
 
-def debug(image, scenario):
+def debug(image, scenario, *arguments):
     with tempfile.TemporaryDirectory() as directory:
         serial = Path(directory) / "serial.log"
         qemu = QEMU.copy()
@@ -101,7 +105,7 @@ def debug(image, scenario):
             "-ex", "set tcp auto-retry on", "-ex", "set tcp connect-timeout 5",
             "-ex", f"target remote 127.0.0.1:{port}",
             "-ex", f"source {ROOT / 'tests/gdb_checks.py'}",
-            "-ex", f"python {scenario}()",
+            "-ex", f"python {scenario}({', '.join(repr(argument) for argument in arguments)})",
         ]
         with subprocess.Popen(qemu, cwd=ROOT, stdout=subprocess.PIPE,
                               stderr=subprocess.STDOUT) as process:
@@ -147,7 +151,7 @@ class KernelTests(unittest.TestCase):
         self.assertNotIn("PANIC", output)
         self.assertNotIn("FAULT", output)
         self.assertNotIn("FAIL", output)
-        self.assertIn("MMU SELFTEST OK ram=32768 device=49 user=60\n", output)
+        self.assertIn("MMU SELFTEST OK ram=32768 device=49 user=0\n", output)
         self.assertIn("MM SELFTEST OK\n", output)
         match = re.search(
             r"MMU TCR=([0-9a-f]+) MAIR=([0-9a-f]+) TTBR0=([0-9a-f]+) "
@@ -161,7 +165,7 @@ class KernelTests(unittest.TestCase):
         self.assertNotEqual(user, kernel)
         self.assertEqual(start % 4096, 0)
         self.assertGreaterEqual(start, 0x40080000)
-        self.assertLessEqual(end, 0x41000000)
+        self.assertLessEqual(end, 0x48000000)
         reserved = [(int(low, 16), int(high, 16))
                     for low, high in re.findall(r"resv: ([0-9a-f]+)-([0-9a-f]+)", output)]
         self.assertTrue(any(low <= start < end <= high for low, high in reserved), reserved)
@@ -179,7 +183,7 @@ class KernelTests(unittest.TestCase):
         self.assertNotIn("PANIC", output)
         self.assertNotIn("FAULT", output)
         self.assertNotIn("FAIL", output)
-        self.assertIn("MMU SELFTEST OK ram=32768 device=49 user=60\n", output)
+        self.assertIn("MMU SELFTEST OK ram=32768 device=49 user=0\n", output)
         self.assertIn("TLB SELFTEST OK\n", output)
         match = re.search(r"MMU TCR=([0-9a-f]+) MAIR=([0-9a-f]+)", output)
         self.assertIsNotNone(match, output)
@@ -200,9 +204,10 @@ class KernelTests(unittest.TestCase):
         self.assertNotIn("PANIC", output)
         self.assertIn("GDB CACHE BOOT OK", observations)
         self.assertIn("GDB CACHE OK", observations)
-        self.assertEqual(re.findall(r"GDB CACHE app=(\d) lines=\d+ OK", observations), ["0", "1", "2"])
+        self.assertEqual(re.findall(r"GDB CACHE app=(\d) page=0 lines=\d+ OK", observations), ["0", "1", "2"])
 
-    @verifies("REQ-APP-001", "REQ-SYS-001", "REQ-BUILD-001", "REQ-PRINT-001", "REQ-MM-004", "REQ-MM-005", "REQ-MM-007")
+    @verifies("REQ-APP-001", "REQ-SYS-001", "REQ-BUILD-001", "REQ-PRINT-001",
+              "REQ-MM-004", "REQ-MM-005", "REQ-MM-007", "REQ-VM-001")
     def test_independent_demos(self):
         with tempfile.TemporaryDirectory() as directory:
             build(directory)
@@ -213,11 +218,92 @@ class KernelTests(unittest.TestCase):
         self.assertNotIn("PANIC", output)
         self.assertNotIn("FAULT", output)
         for index in range(3):
-            self.assertIn(f"LOADED app={index} image={0x41000000 + index * 0x20000:016x} stack={0x41020000 + index * 0x20000:016x} copy=OK", output)
+            self.assertIn(f"LOADED app={index} image={APP_LOAD_ADDR:016x} stack={STACK_TOP:016x} copy=OK", output)
             self.assertEqual(output.count(f"[app {index}] EXIT status=0"), 1)
         self.assertIn("[app 0] sequence result=4500001500000\n", output)
         self.assertIn("[app 1] primes result=9592\n", output)
         self.assertIn("[app 2] checksum result=510000000\n", output)
+
+    @verifies("REQ-VM-001", "REQ-APP-001", "REQ-MM-005", "REQ-MM-006", "REQ-MM-007")
+    def test_per_task_address_spaces(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build(directory, *(f"APP{index}=tests/fixtures/spin.S" for index in range(3)))
+            output, observations = debug(Path(directory) / "kernel.bin", "address_spaces")
+        self.assertNotIn("PANIC", output)
+        self.assertIn("GDB VM OK", observations)
+        switches = re.findall(r"GDB VM switch=(\d+) app=(\d) ttbr0=([0-9a-f]{16}) OK", observations)
+        self.assertEqual([int(number) for number, _, _ in switches], list(range(1, 10)))
+        self.assertEqual([int(task) for _, task, _ in switches], [1, 2, 0] * 3)
+        self.assertEqual(len({root for _, _, root in switches}), 3)
+
+    @verifies("REQ-VM-001", "REQ-SYS-001")
+    def test_logging_same_virtual_address(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build(directory, *(f"APP{index}=tests/fixtures/user_vm.S" for index in range(3)))
+            output, observations = debug(Path(directory) / "kernel.bin", "same_va")
+        self.assertIn("GDB SAME VA OK", observations)
+        self.assertNotIn("PANIC", output)
+        self.assertNotIn("FAULT", output)
+        for index, character in enumerate("ABC"):
+            self.assertIn(f"[app {index}] {character}", output)
+            self.assertIn(f"[app {index}] EXIT status=0", output)
+
+    @verifies("REQ-VM-001", "REQ-SYS-001", "REQ-EXC-001")
+    def test_cross_task_and_former_slot_access(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build(directory, *(f"APP{index}=tests/fixtures/user_vm.S" for index in range(3)))
+            output, observations = debug(Path(directory) / "kernel.bin", "cross_task")
+        self.assertIn("GDB CROSS TASK OK", observations)
+        self.assertNotIn("PANIC", output)
+        self.assertNotIn("EXIT", output)
+        probes = {int(task): int(address, 16) for task, address in re.findall(
+            r"GDB PROBE app=(\d) address=([0-9a-f]{16})", observations)}
+        faults = {int(task): (int(syndrome, 16), int(address, 16))
+                  for task, syndrome, address in re.findall(
+                      r"\[app (\d)\] FAULT ESR=([0-9a-f]{16}) FAR=([0-9a-f]{16})", output)}
+        self.assertEqual(set(probes), {0, 1, 2}, observations)
+        self.assertEqual(set(faults), set(probes), output)
+        self.assertEqual(probes[2], 0x41020000)
+        for task, (syndrome, address) in faults.items():
+            self.assertEqual((syndrome >> 26, syndrome & 0x3f), (0x24, 0x05))
+            self.assertEqual(address, probes[task])
+
+    @verifies("REQ-APP-001", "REQ-VM-001", "REQ-MM-007")
+    def test_multi_page_application(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build(directory, "APP0=tests/fixtures/large_app.c")
+            image_size = len((Path(directory) / "apps/0.bin").read_bytes())
+            output = emulate(Path(directory) / "kernel.bin", "ALL APPS DONE\n")
+            _, observations = debug(Path(directory) / "kernel.bin", "cache")
+        self.assertGreater(image_size, 8192)
+        self.assertLessEqual(image_size, APP_IMAGE_SIZE)
+        self.assertNotIn("PANIC", output)
+        self.assertNotIn("FAULT", output)
+        self.assertIn("[app 0] multi-page image OK\n", output)
+        self.assertIn("[app 0] EXIT status=0", output)
+        pages = re.findall(r"GDB CACHE app=0 page=(\d+) lines=\d+ OK", observations)
+        self.assertEqual([int(page) for page in pages], list(range((image_size + 4095) // 4096)))
+        self.assertIn("GDB CACHE OK", observations)
+
+    @verifies("REQ-VM-001")
+    def test_address_space_allocation_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build(directory)
+            for number, message in (
+                (1, "cannot allocate app 0 address space"),
+                (2, "cannot allocate app 0 root table"),
+                (3, "cannot allocate app page at 0000000000400000"),
+                (4, "cannot allocate app page table at 0000000000400000"),
+                (5, "cannot allocate app page table at 0000000000400000"),
+                (6, "cannot allocate app page at 0000007fffffc000"),
+                (7, "cannot allocate app page table at 0000007fffffc000"),
+                (8, "cannot allocate app page table at 0000007fffffc000"),
+            ):
+                with self.subTest(allocation=number):
+                    output, observations = debug(Path(directory) / "kernel.bin", "allocation_failure", number)
+                    self.assertIn(f"GDB ALLOCATION FAILURE {number} OK", observations)
+                    self.assertIn(f"PANIC: {message}", output)
+                    self.assertNotIn("LOADED", output)
 
     @verifies("REQ-SCHED-001", "REQ-EXC-001", "REQ-PRINT-001", "REQ-MM-004", "REQ-MM-007")
     def test_preempts_without_syscalls(self):
@@ -251,7 +337,7 @@ class KernelTests(unittest.TestCase):
         self.assertIn("[app 0] " + "Z" * 256 + "[app 0] \n", output)
         self.assertIn("[app 0] syscalls OK\n", output)
         self.assertIn("[app 0] EXIT status=0", output)
-        self.assertRegex(output, r"\[app 1\] FAULT ESR=[0-9a-f]{16} FAR=[0-9a-f]{16} ELR=000000004102[0-9a-f]{4}")
+        self.assertRegex(output, r"\[app 1\] FAULT ESR=[0-9a-f]{16} FAR=[0-9a-f]{16} ELR=000000000040[0-9a-f]{4}")
         self.assertNotIn("[app 1] EXIT", output)
         self.assertIn("[app 2] checksum result=510000000", output)
         self.assertIn("[app 2] EXIT status=0", output)
@@ -305,13 +391,14 @@ class KernelTests(unittest.TestCase):
                 self.assertEqual(syndrome & 0x7f, status)
                 self.assertEqual(fault_address, address)
         self.assertEqual(probes["write-text"][0], KERNEL_START)
-        self.assertEqual(probes["exec-user"][0], 0x41000000)
-        self.assertEqual(probes["read-unmapped"][0], 0x41010000)
+        self.assertEqual(probes["exec-user"][0], APP_LOAD_ADDR)
+        self.assertEqual(probes["read-unmapped"][0], APP_LOAD_ADDR + APP_IMAGE_SIZE)
 
     @verifies("REQ-MM-006", "REQ-EXC-001", "REQ-MM-007")
     def test_user_page_permissions(self):
         with tempfile.TemporaryDirectory() as directory:
-            build(directory, *(f"APP{index}=tests/fixtures/user_fault.c" for index in range(3)))
+            build(directory, "APP0=tests/fixtures/user_fault.c", "APP1=tests/fixtures/user_fault_stack.c",
+                  "APP2=tests/fixtures/user_fault_kernel.c")
             output = emulate(Path(directory) / "kernel.bin", "ALL APPS DONE\n")
         self.assertNotIn("PANIC", output)
         self.assertNotIn("ERROR", output)
@@ -322,12 +409,12 @@ class KernelTests(unittest.TestCase):
         # App 0 writes its own code: data abort from EL0, write, level 3 permission fault.
         syndrome, address, link = faults[0]
         self.assertEqual((syndrome >> 26, syndrome & 0x7f), (0x24, 0x4f))
-        self.assertTrue(0x41000000 <= address < 0x41010000, hex(address))
-        self.assertTrue(0x41000000 <= link < 0x41010000, hex(link))
+        self.assertTrue(APP_LOAD_ADDR <= address < APP_LOAD_ADDR + APP_IMAGE_SIZE, hex(address))
+        self.assertTrue(APP_LOAD_ADDR <= link < APP_LOAD_ADDR + APP_IMAGE_SIZE, hex(link))
         # App 1 branches into its stack: instruction abort from EL0.
         syndrome, address, link = faults[1]
         self.assertEqual((syndrome >> 26, syndrome & 0x7f), (0x20, 0x0f))
-        self.assertTrue(0x4103c000 <= address < 0x41040000, hex(address))
+        self.assertTrue(STACK_TOP - APP_STACK_SIZE <= address < STACK_TOP, hex(address))
         self.assertEqual(link, address)
         # App 2 reads the kernel image.
         syndrome, address, _ = faults[2]
@@ -346,7 +433,7 @@ class KernelTests(unittest.TestCase):
     def test_rejects_unsupported_app_sections(self):
         for case in range(1, 7):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
-                with self.assertRaisesRegex(AssertionError, "Application (static storage|image exceeds slot)"):
+                with self.assertRaisesRegex(AssertionError, "Application (static storage|image exceeds limit)"):
                     build(directory, "APP0=tests/fixtures/forbidden.c", f"EXTRA_CFLAGS=-DCASE={case}")
 
     @verifies("REQ-BUILD-001")
@@ -535,7 +622,7 @@ class KernelTests(unittest.TestCase):
         # The firmware area, the kernel image and the page map are one reserved range.
         self.assertTrue(any(low == 0x40000000 and high > page_map > 0x40080000
                             for low, high in reserved), reserved)
-        self.assertIn((0x41000000, 0x41060000), reserved)
+        self.assertTrue(all(high <= 0x41000000 or low >= 0x41060000 for low, high in reserved), reserved)
         # Reserving the blob proves the kernel found the device tree magic there.
         self.assertTrue(any(low <= device_tree < high for low, high in reserved), reserved)
         free = int(re.search(r"free: \d+ pg = (\d+) KiB", output).group(1))

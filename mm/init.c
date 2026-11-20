@@ -5,7 +5,6 @@
  */
 
 #include "kernel.h"
-#include "abi.h"
 
 #include <miaow/memblock.h>
 #include <miaow/mm.h>
@@ -41,8 +40,7 @@ void mem_init(void)
 	uintptr_t end;
 	uintptr_t map;
 
-	if (memblock_add(PHYS_OFFSET, RAM_SIZE) || memblock_reserve(PHYS_OFFSET, __pa(_end) - PHYS_OFFSET) ||
-	    memblock_reserve(APP_FIRST, (size_t)APP_COUNT * APP_SLOT_SIZE)) {
+	if (memblock_add(PHYS_OFFSET, RAM_SIZE) || memblock_reserve(PHYS_OFFSET, __pa(_end) - PHYS_OFFSET)) {
 		kernel_panic();
 	}
 	early_init_fdt_reserve_self();

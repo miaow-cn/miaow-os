@@ -5,7 +5,6 @@
  */
 
 #include "kernel.h"
-#include "abi.h"
 
 #include <miaow/pgtable.h>
 
@@ -18,8 +17,8 @@
 #define TCR_TG0_4K     (0UL << 14)
 #define TCR_TG1_4K     (2UL << 30)
 
-/* L2 and L3 tables: IO (1 + 2), linear map (1 + one per 2 MiB of RAM), app slots (1 + 1). */
-#define EARLY_PGTABLES (6 + (RAM_SIZE >> PMD_SHIFT))
+/* L2 and L3 tables: IO (1 + 2), linear map (1 + one per 2 MiB of RAM). */
+#define EARLY_PGTABLES (4 + (RAM_SIZE >> PMD_SHIFT))
 
 /* clang-format off */
 
@@ -49,19 +48,13 @@
  * |   __start_rodata..__end_rodata         |                        |   rodata   |   r--   |               |
  * +----------------------------------------+------------------------+------------+---------+---------------+
  *
- * TTBR0 (user_pg_dir), VA = PA, one mapping shared by all apps, n = 0..2:
- * +----------------------------------------+------------+---------+---------+
- * | VA                                     | Use        | EL0 RWX | EL1 RWX |
- * +----------------------------------------+------------+---------+---------+
- * | 0x41000000 + n * 0x20000, 64 KiB       | app image  |   r-x   |   r--   |
- * | 0x4101c000 + n * 0x20000, 16 KiB       | app stack  |   rw-   |   rw-   |
- * +----------------------------------------+------------+---------+---------+
- * The 48 KiB between image and stack stays unmapped as a guard.
+ * TTBR0 is empty after boot. Each app later gets a separate root, with an image at
+ * 0x400000 and a 16 KiB stack ending at 0x8000000000.
  *
  * While the MMU is being enabled, TTBR0 holds idmap_pg_dir instead. Its only entry is the
  * linear map's L1 entry, placed at the index of PHYS_OFFSET: PAGE_OFFSET and PHYS_OFFSET
  * are 1 GiB aligned, so the same L2 and L3 tables translate all of RAM to itself.
- * cpu_uninstall_idmap() then installs user_pg_dir.
+ * cpu_uninstall_idmap() then installs an empty reserved_pg_dir.
  *
  * The linear map is the only mapping of kernel text and read-only data, so restricting
  * those segments there leaves no writable alias.
@@ -79,7 +72,7 @@
 
 static alignas(PAGE_SIZE) pgd_t swapper_pg_dir[PTRS_PER_PGD];
 static alignas(PAGE_SIZE) pgd_t idmap_pg_dir[PTRS_PER_PGD];
-static alignas(PAGE_SIZE) pgd_t user_pg_dir[PTRS_PER_PGD];
+static alignas(PAGE_SIZE) pgd_t reserved_pg_dir[PTRS_PER_PGD];
 static alignas(PAGE_SIZE) uint64_t early_pgtables[EARLY_PGTABLES][PTRS_PER_PTE];
 static unsigned early_pgtables_used;
 
@@ -230,13 +223,6 @@ void mmu_init(void)
 	create_pgd_mapping(swapper_pg_dir, 0x080a0000, IO_ADDRESS(0x080a0000), 0x20000, PROT_DEVICE_nGnRnE);
 	create_pgd_mapping(swapper_pg_dir, 0x09000000, IO_ADDRESS(0x09000000), PAGE_SIZE, PROT_DEVICE_nGnRnE);
 
-	for (uintptr_t slot = APP_FIRST; slot < APP_FIRST + APP_COUNT * APP_SLOT_SIZE; slot += APP_SLOT_SIZE) {
-		uintptr_t stack = slot + APP_SLOT_SIZE - APP_STACK_SIZE;
-
-		create_pgd_mapping(user_pg_dir, slot, slot, APP_IMAGE_SIZE, PAGE_READONLY_EXEC);
-		create_pgd_mapping(user_pg_dir, stack, stack, APP_STACK_SIZE, PAGE_SHARED);
-	}
-
 	/* The linear map's L2 table, placed at the PHYS_OFFSET index, maps all RAM to itself. */
 	idmap_pg_dir[pgd_index(PHYS_OFFSET)] = swapper_pg_dir[pgd_index(PAGE_OFFSET)];
 
@@ -282,7 +268,7 @@ void mmu_init(void)
 /* Called at the high address, where symbols are virtual. */
 void cpu_uninstall_idmap(void)
 {
-	write_sysreg(__pa(user_pg_dir), ttbr0_el1);
+	write_sysreg(__pa(reserved_pg_dir), ttbr0_el1);
 	__asm__ volatile("isb" : : : "memory");
 	flush_tlb_all();
 }

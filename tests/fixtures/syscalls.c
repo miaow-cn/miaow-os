@@ -16,10 +16,12 @@ int app_main(void)
 	if (syscall(__NR_log, 0, 0) != 0 || syscall(__NR_log, UINTPTR_MAX, 0) != 0 ||
 	    syscall(__NR_log, (uintptr_t)buffer, 257) != -EINVAL || syscall(__NR_log, 0, 1) != -EFAULT ||
 	    syscall(__NR_log, UINTPTR_MAX - 1, 4) != -EFAULT ||
-	    syscall(__NR_log, APP_FIRST + APP_SLOT_SIZE - 1, 2) != -EFAULT ||
-	    syscall(__NR_log, APP_FIRST + APP_IMAGE_SIZE - 1, 2) != -EFAULT ||
-	    syscall(__NR_log, APP_FIRST + APP_SLOT_SIZE, 1) != -EFAULT ||
-	    syscall(__NR_log, APP_FIRST + APP_SLOT_SIZE * 2 - 16, 1) != -EFAULT ||
+	    syscall(__NR_log, STACK_TOP - 1, 2) != -EFAULT ||
+	    syscall(__NR_log, STACK_TOP - APP_STACK_SIZE - 1, 2) != -EFAULT ||
+	    syscall(__NR_log, APP_LOAD_ADDR - 1, 2) != -EFAULT ||
+	    syscall(__NR_log, APP_LOAD_ADDR + APP_IMAGE_SIZE - 1, 2) != -EFAULT ||
+	    syscall(__NR_log, 0x41000000, 1) != -EFAULT || syscall(__NR_log, 0x41020000, 1) != -EFAULT ||
+	    syscall(__NR_log, 0x41040000, 1) != -EFAULT ||
 	    syscall(__NR_log, 0x40080000, 1) != -EFAULT || syscall(__NR_log, 0x09000000, 1) != -EFAULT ||
 	    syscall(__NR_log, PAGE_OFFSET + TEXT_OFFSET, 1) != -EFAULT ||
 	    syscall(__NR_log, IO_ADDRESS(0x09000000), 1) != -EFAULT || syscall(99, 0, 0) != -ENOSYS) {

@@ -5,6 +5,16 @@ import gdb
 
 PAGE_OFFSET = 0xffffffc000000000
 PHYS_OFFSET = 0x40000000
+PAGE_SIZE = 4096
+APP_LOAD_ADDR = 0x400000
+APP_STACK_SIZE = 0x4000
+STACK_TOP = 0x8000000000
+ADDRESS = 0x0000fffffffff000
+NORMAL = 0x707
+USER = 1 << 6
+RDONLY = 1 << 7
+PXN = 1 << 53
+UXN = 1 << 54
 
 
 def value(expression):
@@ -17,6 +27,74 @@ def value(expression):
 
 def physical(symbol):
     return value(f"&{symbol}") - PAGE_OFFSET + PHYS_OFFSET
+
+
+def linear(address):
+    return address - PHYS_OFFSET + PAGE_OFFSET
+
+
+def word(address):
+    return int.from_bytes(gdb.selected_inferior().read_memory(address, 8), "little")
+
+
+def task_root(identifier):
+    return value(f"tasks[{identifier}].mm->pgd") - PAGE_OFFSET + PHYS_OFFSET
+
+
+def task_pte(identifier, address):
+    table = linear(task_root(identifier))
+    for shift in (30, 21):
+        entry = word(table + ((address >> shift) & 511) * 8)
+        if not entry:
+            return 0
+        assert entry & 3 == 3, hex(entry)
+        table = linear(entry & ADDRESS)
+    return word(table + ((address >> 12) & 511) * 8)
+
+
+def user_mappings(identifier):
+    inferior = gdb.selected_inferior()
+    tables = []
+    mappings = {}
+
+    def read_table(address):
+        contents = bytes(inferior.read_memory(linear(address), PAGE_SIZE))
+        tables.append(address)
+        return [int.from_bytes(contents[i:i + 8], "little") for i in range(0, PAGE_SIZE, 8)]
+
+    for upper, pgd in enumerate(read_table(task_root(identifier))):
+        if pgd:
+            assert pgd & ~ADDRESS == 3
+            for middle, pmd in enumerate(read_table(pgd & ADDRESS)):
+                if pmd:
+                    assert pmd & ~ADDRESS == 3
+                    for lower, pte in enumerate(read_table(pmd & ADDRESS)):
+                        if pte:
+                            mappings[(upper << 30) | (middle << 21) | (lower << 12)] = pte
+    return tables, mappings
+
+
+def kernel_tables(root):
+    inferior = gdb.selected_inferior()
+    result = []
+
+    def read_table(address):
+        contents = bytes(inferior.read_memory(linear(address), PAGE_SIZE))
+        result.append((address, contents))
+        return [int.from_bytes(contents[i:i + 8], "little") for i in range(0, PAGE_SIZE, 8)]
+
+    for pgd in read_table(root):
+        if pgd:
+            assert pgd & 3 == 3
+            for pmd in read_table(pgd & ADDRESS):
+                if pmd:
+                    assert pmd & 3 == 3
+                    read_table(pmd & ADDRESS)
+    return result
+
+
+def set_task_register(identifier, register, contents):
+    gdb.execute(f"set var tasks[{identifier}].regs.regs[{register}] = {contents}")
 
 
 def stop_at(symbol, before_mmu=False):
@@ -144,35 +222,158 @@ def cache():
         probe.delete()
     print("GDB CACHE BOOT OK")
     for identifier in range(3):
-        stop_at("flush_icache_range")
-        start, end = value("$x0"), value("$x1")
-        assert start == PAGE_OFFSET + 0x01000000 + identifier * 0x20000
-        assert end - start == value(f"tasks[{identifier}].size")
-        assert value("$SCTLR") & 0x1004 == 0x1004
-        line = 4 << ((value("$CTR_EL0") >> 16) & 15)
-        code = instructions("flush_icache_range")
-        clean = next(instruction["addr"] for instruction in code if instruction["asm"] == "dc cvau, x4")
-        barrier = next(index for index, instruction in enumerate(code) if instruction["asm"] == "dsb sy")
-        expected = ["dsb sy", "ic iallu", "dsb sy", "isb", "ret"]
-        assert [instruction["asm"] for instruction in code[barrier:barrier + 5]] == expected
-        probe = gdb.Breakpoint(f"*{clean}", type=gdb.BP_HARDWARE_BREAKPOINT, internal=True)
-        for address in range(start & -line, end, line):
+        offset = 0
+        while True:
+            stop_at("flush_icache_range")
+            start, end = value("$x0"), value("$x1")
+            size = value(f"tasks[{identifier}].size")
+            descriptor = task_pte(identifier, APP_LOAD_ADDR + offset)
+            assert start == linear(descriptor & ADDRESS)
+            assert end - start == min(PAGE_SIZE, size - offset)
+            assert value("$SCTLR") & 0x1004 == 0x1004
+            line = 4 << ((value("$CTR_EL0") >> 16) & 15)
+            code = instructions("flush_icache_range")
+            clean = next(instruction["addr"] for instruction in code if instruction["asm"] == "dc cvau, x4")
+            barrier = next(index for index, instruction in enumerate(code) if instruction["asm"] == "dsb sy")
+            expected = ["dsb sy", "ic iallu", "dsb sy", "isb", "ret"]
+            assert [instruction["asm"] for instruction in code[barrier:barrier + 5]] == expected
+            probe = gdb.Breakpoint(f"*{clean}", type=gdb.BP_HARDWARE_BREAKPOINT, internal=True)
+            for address in range(start & -line, end, line):
+                gdb.execute("continue")
+                assert value("$pc") == clean
+                assert value("$x4") == address
+                assert value("$x2") == line
+            probe.delete()
+            stop = code[barrier]["addr"]
+            probe = gdb.Breakpoint(f"*{stop}", type=gdb.BP_HARDWARE_BREAKPOINT, internal=True)
             gdb.execute("continue")
-            assert value("$pc") == clean
-            assert value("$x4") == address
-            assert value("$x2") == line
-        probe.delete()
-        stop = code[barrier]["addr"]
-        probe = gdb.Breakpoint(f"*{stop}", type=gdb.BP_HARDWARE_BREAKPOINT, internal=True)
-        gdb.execute("continue")
-        assert value("$pc") == stop
-        probe.delete()
-        for instruction in code[barrier:barrier + 5]:
-            assert value("$pc") == instruction["addr"]
-            gdb.execute("stepi")
-        print(f"GDB CACHE app={identifier} lines={len(range(start & -line, end, line))} OK")
+            assert value("$pc") == stop
+            probe.delete()
+            for instruction in code[barrier:barrier + 5]:
+                assert value("$pc") == instruction["addr"]
+                gdb.execute("stepi")
+            print(f"GDB CACHE app={identifier} page={offset // PAGE_SIZE} "
+                  f"lines={len(range(start & -line, end, line))} OK")
+            offset += PAGE_SIZE
+            if offset >= size:
+                break
     stop_at("enter_app")
     print("GDB CACHE OK")
+
+
+def address_spaces():
+    stop_at("enter_app")
+    inferior = gdb.selected_inferior()
+    roots = [task_root(identifier) for identifier in range(3)]
+    assert len(set(roots)) == 3
+    assert value("$TTBR0_EL1") == roots[0]
+    kernel_root = value("$TTBR1_EL1")
+    kernel_before = kernel_tables(kernel_root)
+    backing = []
+    tables = []
+
+    for identifier in range(3):
+        assert value(f"tasks[{identifier}].image") == APP_LOAD_ADDR
+        assert value(f"tasks[{identifier}].stack_top") == STACK_TOP
+        size = value(f"tasks[{identifier}].size")
+        source = bytes(inferior.read_memory(value(f"&app{identifier}_start"), size))
+        copied = bytearray()
+        task_tables, mappings = user_mappings(identifier)
+        tables.extend(task_tables)
+        image_addresses = list(range(APP_LOAD_ADDR, APP_LOAD_ADDR + size, PAGE_SIZE))
+        stack_addresses = list(range(STACK_TOP - APP_STACK_SIZE, STACK_TOP, PAGE_SIZE))
+        assert set(mappings) == set(image_addresses + stack_addresses)
+        for offset in range(0, size, PAGE_SIZE):
+            descriptor = mappings[APP_LOAD_ADDR + offset]
+            assert descriptor & ~ADDRESS == NORMAL | USER | RDONLY | PXN
+            backing.append(descriptor & ADDRESS)
+            copied.extend(inferior.read_memory(linear(descriptor & ADDRESS), PAGE_SIZE))
+        assert bytes(copied[:size]) == source
+        assert bytes(copied[size:]) == bytes(len(copied) - size)
+        for address in stack_addresses:
+            descriptor = mappings[address]
+            assert descriptor & ~ADDRESS == NORMAL | USER | PXN | UXN
+            backing.append(descriptor & ADDRESS)
+            assert bytes(inferior.read_memory(linear(descriptor & ADDRESS), PAGE_SIZE)) == bytes(PAGE_SIZE)
+        for address in (0, APP_LOAD_ADDR - PAGE_SIZE, APP_LOAD_ADDR + 0x10000,
+                        STACK_TOP - APP_STACK_SIZE - PAGE_SIZE,
+                        0x41000000, 0x41020000, 0x41040000):
+            assert task_pte(identifier, address) == 0, hex(address)
+    allocated = backing + tables
+    assert len(allocated) == len(set(allocated))
+    reserved = []
+    for index in range(value("memblock.reserved.cnt")):
+        start = value(f"memblock.reserved.regions[{index}].base")
+        size = value(f"memblock.reserved.regions[{index}].size")
+        reserved.append((start, start + size))
+    for address in allocated:
+        assert PHYS_OFFSET <= address < PHYS_OFFSET + 0x08000000
+        assert all(address + PAGE_SIZE <= start or address >= end for start, end in reserved)
+    for identifier in range(3):
+        for other in range(3):
+            if identifier != other:
+                for address in (APP_LOAD_ADDR, STACK_TOP - PAGE_SIZE):
+                    assert task_pte(identifier, task_pte(other, address) & ADDRESS) == 0
+
+    events = []
+    probes = []
+    for instruction in instructions("flush_tlb_all"):
+        operation = instruction["asm"]
+        if operation.split()[0] in ("dsb", "isb", "tlbi"):
+            probes.append(MaintenanceTrace(instruction["addr"], operation, events))
+    for tick in range(9):
+        stop_at("trap")
+        assert value("$x1") == 1
+        assert value("current") == tick % 3
+        stop_at("enter_app")
+        selected = (tick + 1) % 3
+        assert value("current") == selected
+        assert value("$TTBR0_EL1") == roots[selected]
+        assert value("$TTBR1_EL1") == kernel_root
+        check_tlbi(events, tick + 1)
+        print(f"GDB VM switch={tick + 1} app={selected} ttbr0={roots[selected]:016x} OK")
+    for probe in probes:
+        probe.delete()
+    assert kernel_tables(kernel_root) == kernel_before
+    print("GDB VM OK")
+
+
+def same_va():
+    stop_at("enter_app")
+    inferior = gdb.selected_inferior()
+    address = STACK_TOP - PAGE_SIZE
+    for identifier in range(3):
+        descriptor = task_pte(identifier, address)
+        inferior.write_memory(linear(descriptor & ADDRESS), bytes([ord("A") + identifier]))
+        set_task_register(identifier, 0, address)
+        set_task_register(identifier, 1, 1)
+    stop_at("timer_stop")
+    print("GDB SAME VA OK")
+
+
+def cross_task():
+    stop_at("enter_app")
+    addresses = [
+        task_pte(1, APP_LOAD_ADDR) & ADDRESS,
+        task_pte(2, STACK_TOP - PAGE_SIZE) & ADDRESS,
+        0x41020000,
+    ]
+    for identifier, address in enumerate(addresses):
+        assert not task_pte(identifier, address)
+        set_task_register(identifier, 0, address)
+        set_task_register(identifier, 1, -14)
+        print(f"GDB PROBE app={identifier} address={address:016x}")
+    stop_at("timer_stop")
+    print("GDB CROSS TASK OK")
+
+
+def allocation_failure(number):
+    stop_at("start_apps")
+    for _ in range(number):
+        stop_at("alloc_pages")
+    gdb.execute("return (struct page *)0")
+    stop_at("kernel_panic")
+    print(f"GDB ALLOCATION FAILURE {number} OK")
 
 
 def preempt():

@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-#include "abi.h"
 #include <miaow/memory.h>
 
 ENTRY(_start)
@@ -41,6 +40,6 @@ SECTIONS
 		__stack_top = .;
 	} :data
 	_end = .;
-	ASSERT(. - PAGE_OFFSET + PHYS_OFFSET <= APP_FIRST, "Kernel overlaps application slots")
+	ASSERT(. <= PAGE_OFFSET + RAM_SIZE, "Kernel exceeds RAM")
 	/DISCARD/ : { *(.comment .note* .eh_frame* .ARM.attributes) }
 }
